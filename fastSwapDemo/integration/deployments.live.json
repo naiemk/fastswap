@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "sepolia": {
+    "network": "11155111",
+    "owner": "0x3C93328CdD4a387D5543c22D208B8fa5e32FA3b9",
+    "stack": {
+      "codeHash": "0x2868b865e58d687afbd638d6ad12e822ac9a206e1ef242c718b20aeab9099521",
+      "fastSwap": "0x06e984d413DFE491a417b6f03Ee6F47F25861ED5",
+      "sweeper": "0x2b177f5e63eE1FF363c8E6374c56F0A051617C55",
+      "deployedAt": "2026-06-06T14:46:04.667Z"
+    },
+    "usdt": {
+      "codeHash": "0x57437cbd417cf904ec2fa170ace566d06683263183c4dab0613404cccda28120",
+      "address": "0xED4C811a2F2662FfF2fef3033b3D4Ad253F597a1",
+      "deployedAt": "2026-06-06T14:46:41.823Z"
+    }
+  },
+  "nile": {
+    "network": "3448148188",
+    "owner": "TFVVt2ZhXCr1HXrKND2Qxmoj7zrKWd4BZt",
+    "stack": {
+      "codeHash": "0x41ca9510633c1d450044e119e80e4d13fd3e8c982979fbc98e8d3db07dbe7931",
+      "fastSwap": "TAX6R3HawmPUVTNFzxKGJSgdv7YEMJTn6C",
+      "sweeper": "TE5XydChEBK3m1iETrcMKeCkmZ3vW3rE49",
+      "deployedAt": "2026-06-06T14:46:16.611Z"
+    },
+    "usdt": {
+      "codeHash": "0x57437cbd417cf904ec2fa170ace566d06683263183c4dab0613404cccda28120",
+      "address": "TQVM4KPXb3G4LaN2ZBJQvReBYWhWwj8NM3",
+      "deployedAt": "2026-06-06T14:47:42.536Z"
+    }
+  }
+}

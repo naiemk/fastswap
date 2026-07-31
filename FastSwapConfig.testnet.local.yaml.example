@@ -1,0 +1,39 @@
+# Local overlay snippet for 2-chain Sepolia + Nile (optional).
+# Prefer writing addresses into FastSwapConfig.testnet.yaml after bootstrap.
+#
+# Real prices: CoinGecko + Binance in FastSwapConfig.testnet.yaml (no static).
+# Real captcha: TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY in .env
+
+version: 1
+active-chains:
+  - sepolia
+  - tron
+server:
+  publicUrl: "${FASTSWAP_PUBLIC_URL}"
+  captcha:
+    provider: cloudflare-turnstile
+    siteKey: "${TURNSTILE_SITE_KEY}"
+    secretKey: "${TURNSTILE_SECRET_KEY}"
+    requireForQuotes: true
+    requireForInvoices: true
+deploy:
+  contracts:
+    fastSwapImplementation: ""
+    fastSwapAddress: ""
+    sweeperAddress: ""
+    forwarderImplementation: ""
+    liquidityManagerImplementation: ""
+    liquidityManagerAddress: ""
+chains:
+  - key: sepolia
+    router: "${SEPOLIA_ROUTER_ADDRESS}"
+    tokens:
+      USDT:
+        address: ""
+  - key: tron
+    router: "${TRON_ROUTER_ADDRESS}"
+    contracts:
+      fastSwapAddress: ""
+      sweeperAddress: ""
+      forwarderImplementation: ""
+      liquidityManagerAddress: ""
