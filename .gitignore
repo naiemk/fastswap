@@ -141,3 +141,5 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+fastSwapDemo/state/
+fastSwapDemo/integration/deployments.live.json
