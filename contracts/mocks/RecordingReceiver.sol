@@ -1,0 +1,1 @@
+../../../onchain-invoice/contracts/mocks/RecordingReceiver.sol

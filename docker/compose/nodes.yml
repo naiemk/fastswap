@@ -1,0 +1,87 @@
+# FastSwap background nodes — no published ports; holds chain private keys.
+# Run with api.yml on the shared fastswap network (see npm run docker:up).
+x-fastswap-nodes: &fastswap-nodes
+  image: fastswap-nodes:local
+  build:
+    context: ../../..
+    dockerfile: fastswap/docker/Dockerfile
+
+services:
+  sweep:
+    <<: *fastswap-nodes
+    command: ["node", "dist/nodes/sweep-main.js", "/config/FastSwapConfig.yaml"]
+    env_file:
+      - .env
+    environment:
+      FASTSWAP_API_BASE: http://api:4010
+      API_SIGNING_SECRET: ${API_SIGNING_SECRET}
+      SWEEP_EVM_PRIVATE_KEY: ${SWEEP_EVM_PRIVATE_KEY}
+      SWEEP_TRON_PRIVATE_KEY: ${SWEEP_TRON_PRIVATE_KEY}
+      BASE_RPC_URL: ${BASE_RPC_URL}
+      ARBITRUM_RPC_URL: ${ARBITRUM_RPC_URL}
+      BSC_RPC_URL: ${BSC_RPC_URL}
+      TRON_FULL_HOST: ${TRON_FULL_HOST}
+    volumes:
+      - ../../FastSwapConfig.yaml:/config/FastSwapConfig.yaml:ro
+      - sweep-data:/app/data
+    networks:
+      - fastswap
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  relay:
+    image: fastswap-nodes:local
+    command: ["node", "dist/nodes/relay-node/main.js", "/config/FastSwapConfig.yaml"]
+    env_file:
+      - .env
+    environment:
+      FASTSWAP_API_BASE: http://api:4010
+      API_SIGNING_SECRET: ${API_SIGNING_SECRET}
+      RELAY_EVM_PRIVATE_KEY: ${RELAY_EVM_PRIVATE_KEY}
+      RELAY_TRON_PRIVATE_KEY: ${RELAY_TRON_PRIVATE_KEY}
+      BASE_RPC_URL: ${BASE_RPC_URL}
+      ARBITRUM_RPC_URL: ${ARBITRUM_RPC_URL}
+      BSC_RPC_URL: ${BSC_RPC_URL}
+      TRON_FULL_HOST: ${TRON_FULL_HOST}
+    volumes:
+      - ../../FastSwapConfig.yaml:/config/FastSwapConfig.yaml:ro
+      - relay-data:/app/data
+    networks:
+      - fastswap
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  liqman:
+    image: fastswap-nodes:local
+    command: ["node", "lm-dist/LiquidityManager/bot/index.js", "--fastswap-config", "/config/FastSwapConfig.yaml"]
+    env_file:
+      - .env
+    environment:
+      LM_PRIVATE_KEY: ${LM_PRIVATE_KEY}
+      BASE_RPC_URL: ${BASE_RPC_URL}
+      ARBITRUM_RPC_URL: ${ARBITRUM_RPC_URL}
+      BSC_RPC_URL: ${BSC_RPC_URL}
+      BASE_ROUTER_ADDRESS: ${BASE_ROUTER_ADDRESS}
+      ARBITRUM_ROUTER_ADDRESS: ${ARBITRUM_ROUTER_ADDRESS}
+      BSC_ROUTER_ADDRESS: ${BSC_ROUTER_ADDRESS}
+      TRON_FULL_HOST: ${TRON_FULL_HOST}
+    volumes:
+      - ../../FastSwapConfig.yaml:/config/FastSwapConfig.yaml:ro
+      - liqman-data:/app/data
+    networks:
+      - fastswap
+    restart: unless-stopped
+
+volumes:
+  sweep-data:
+  relay-data:
+  liqman-data:
+
+networks:
+  fastswap:
+    name: fastswap
+    external: true

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "resolveJsonModule": true,
+    "types": ["node", "mocha"]
+  },
+  "include": [
+    "server/**/*.ts",
+    "nodes/**/*.ts",
+    "cli/**/*.ts",
+    "shared/**/*.ts",
+    "config/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "lm-dist", "demo-dist", "test", "LiquidityManager", "fastSwapDemo"]
+}

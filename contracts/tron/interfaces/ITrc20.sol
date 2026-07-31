@@ -1,0 +1,1 @@
+../../../../onchain-invoice/contracts/tron/interfaces/ITrc20.sol
