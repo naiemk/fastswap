@@ -9,6 +9,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
       ethers: any;
     };
     const [owner, payer, recipient, sink] = await ethers.getSigners();
+    const chainId = (await ethers.provider.getNetwork()).chainId;
 
     const FastSwap = await ethers.getContractFactory("FastSwapReceiver");
     const implementation = await FastSwap.deploy();
@@ -33,13 +34,16 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     const relayerRole = await fastSwap.RELAYER_ROLE();
     await fastSwap.grantRole(relayerRole, owner.address);
 
-    return { ethers, owner, payer, recipient, sink, fastSwap, token, sweeper, mockAdapter, adapterId };
+    const makeIntent = (overrides: Parameters<typeof encodeIntentV2>[0]) =>
+      encodeIntentV2({ ...overrides, sourceChainId: chainId });
+
+    return { ethers, owner, payer, recipient, sink, fastSwap, token, sweeper, mockAdapter, adapterId, chainId, makeIntent };
   }
 
   it("records invoice payment through sweep", async function () {
-    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: ethersLib.parseEther("0.95"),
       recipient: recipient.address,
@@ -57,9 +61,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("executes via mock adapter after payment", async function () {
-    const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployFixture();
+    const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -89,9 +93,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("refunds paid invoice to refund address", async function () {
-    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -113,16 +117,16 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects idle ERC20 balance claim without forwarder pull", async function () {
-    const { payer, recipient, fastSwap, sweeper, token } = await deployFixture();
+    const { payer, recipient, fastSwap, sweeper, token, makeIntent } = await deployFixture();
     const tokenAddress = await token.getAddress();
-    const victimData = encodeIntentV2({
+    const victimData = makeIntent({
       minSourceAmount: ethersLib.parseUnits("100", 18),
       minAmountOut: 1n,
       recipient: recipient.address,
       refundTo: recipient.address,
       sourceToken: tokenAddress,
     });
-    const attackerData = encodeIntentV2({
+    const attackerData = makeIntent({
       minSourceAmount: ethersLib.parseUnits("100", 18),
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -147,8 +151,8 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects owner executeInvoice without a recorded payment", async function () {
-    const { owner, recipient, fastSwap } = await deployFixture();
-    const data = encodeIntentV2({
+    const { owner, recipient, fastSwap, makeIntent } = await deployFixture();
+    const data = makeIntent({
       minSourceAmount: 1n,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -162,10 +166,10 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("allows permissionless refund after expiry", async function () {
-    const { ethers, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { ethers, payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
     const expiresAt = Math.floor(Date.now() / 1000) + 120;
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -190,9 +194,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects non-relayer refund before expiry", async function () {
-    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -205,9 +209,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("refunds while paused", async function () {
-    const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { owner, payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -223,10 +227,10 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects execute after expiry grace window", async function () {
-    const { ethers, owner, payer, recipient, fastSwap, sweeper, adapterId } = await deployFixture();
+    const { ethers, owner, payer, recipient, fastSwap, sweeper, adapterId, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
     const expiresAt = Math.floor(Date.now() / 1000) + 120;
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -251,9 +255,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("blocks rescue of reserved invoice funds", async function () {
-    const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { owner, payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -269,7 +273,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("allows rescue of unreserved donations", async function () {
-    const { owner, payer, fastSwap } = await deployFixture();
+    const { owner, payer, fastSwap, makeIntent } = await deployFixture();
     await payer.sendTransaction({ to: await fastSwap.getAddress(), value: ethersLib.parseEther("0.5") });
     const before = await owner.provider.getBalance(owner.address);
     await fastSwap.connect(owner).rescue(ethersLib.ZeroAddress, owner.address, ethersLib.parseEther("0.5"));
@@ -278,9 +282,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects execute when adapter is not registered", async function () {
-    const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { owner, payer, recipient, fastSwap, sweeper, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 1n,
       recipient: recipient.address,
@@ -307,9 +311,9 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects execute with tampered minAmountOut in unsigned plan", async function () {
-    const { owner, payer, recipient, fastSwap, sweeper, adapterId } = await deployFixture();
+    const { owner, payer, recipient, fastSwap, sweeper, adapterId, makeIntent } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const data = encodeIntentV2({
+    const data = makeIntent({
       minSourceAmount: sourceAmount,
       minAmountOut: 100n,
       recipient: recipient.address,
@@ -349,6 +353,7 @@ function encodeIntentV2(overrides: {
   quoteSalt?: string;
   sourceToken?: string;
   expiresAt?: number;
+  sourceChainId?: bigint;
 }) {
   const recipientBytes = ethersLib.zeroPadValue(overrides.recipient, 20);
   const refundBytes = ethersLib.zeroPadValue(overrides.refundTo, 20);
@@ -364,7 +369,7 @@ function encodeIntentV2(overrides: {
       {
         version: 2,
         quoteId: ethersLib.id(overrides.quoteSalt ?? "quote"),
-        sourceChainId: 1,
+        sourceChainId: overrides.sourceChainId ?? 1n,
         sourceToken: sourceTokenBytes,
         minSourceAmount: overrides.minSourceAmount ?? 1n,
         destChainId: 2,

@@ -40,6 +40,8 @@ describe("FastSwap system API (end-to-end)", function () {
   it("creates invoice via API, pays, sweeps, executes, and GET invoice shows completion", async function () {
     const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & { ethers: any };
     const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployStack(ethers);
+    const sourceChainId = String((await ethers.provider.getNetwork()).chainId);
+    const destChainId = String(Number(sourceChainId) + 1);
 
     const directory = await mkdtemp(join(tmpdir(), "fastswap-system-api-"));
     const invoiceSdk = new OnchainInvoiceSdk({
@@ -51,27 +53,27 @@ describe("FastSwap system API (end-to-end)", function () {
       sqlitePath: join(directory, "fastswap.sqlite"),
       nodeApiKey: NODE_KEY,
       invoiceSdk,
-      invoiceSdksByChainId: { "1": invoiceSdk, "2": invoiceSdk },
+      invoiceSdksByChainId: { [sourceChainId]: invoiceSdk, [destChainId]: invoiceSdk },
       chains: [
         {
-          id: "1",
+          id: sourceChainId,
           type: "evm",
           name: "Source",
           nativeSymbol: "ETH",
           sweeperAddress: await sweeper.getAddress(),
           fastSwapAddress: await fastSwap.getAddress(),
           explorerUrl: "",
-          tokens: [{ symbol: "ETH", chainId: "1", decimals: 18, isNative: true, priceUsdMicros: "2000000000" }],
+          tokens: [{ symbol: "ETH", chainId: sourceChainId, decimals: 18, isNative: true, priceUsdMicros: "2000000000" }],
         },
         {
-          id: "2",
+          id: destChainId,
           type: "evm",
           name: "Target",
           nativeSymbol: "ETH",
           sweeperAddress: await sweeper.getAddress(),
           fastSwapAddress: await fastSwap.getAddress(),
           explorerUrl: "",
-          tokens: [{ symbol: "ETH", chainId: "2", decimals: 18, isNative: true }],
+          tokens: [{ symbol: "ETH", chainId: destChainId, decimals: 18, isNative: true }],
         },
       ],
       resolveInvoiceStatus: async (inv: FastSwapInvoice): Promise<FastSwapStatus> => {
@@ -89,9 +91,9 @@ describe("FastSwap system API (end-to-end)", function () {
 
     try {
       const quote = await postJson(`${baseUrl}/quotes`, {
-        sourceChainId: "1",
+        sourceChainId,
         sourceToken: ethersLib.ZeroAddress,
-        targetChainId: "2",
+        targetChainId: destChainId,
         targetToken: ethersLib.ZeroAddress,
         recipient: recipient.address,
         usdPack: 10,
