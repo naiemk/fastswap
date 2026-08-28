@@ -159,6 +159,64 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     );
   });
 
+  it("allows permissionless refund after expiry", async function () {
+    const { ethers, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const expiresAt = Math.floor(Date.now() / 1000) + 120;
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+      expiresAt,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    const invoiceAddress = await sweeper.getInvoiceAddress(invoiceId);
+
+    await payer.sendTransaction({ to: invoiceAddress, value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
+    await ethers.provider.send("evm_increaseTime", [121]);
+    await ethers.provider.send("evm_mine", []);
+
+    const before = await recipient.provider.getBalance(recipient.address);
+    await fastSwap.connect(recipient).refund(invoiceId);
+    const after = await recipient.provider.getBalance(recipient.address);
+    expect(after - before).to.equal(sourceAmount);
+  });
+
+  it("rejects non-relayer refund before expiry", async function () {
+    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await payer.sendTransaction({ to: await sweeper.getInvoiceAddress(invoiceId), value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
+    await expectRevert(fastSwap.connect(recipient).refund(invoiceId), "InvalidState");
+  });
+
+  it("refunds while paused", async function () {
+    const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await payer.sendTransaction({ to: await sweeper.getInvoiceAddress(invoiceId), value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
+    await fastSwap.pause();
+    await fastSwap.refund(invoiceId);
+    const record = await fastSwap.invoiceRecord(invoiceId);
+    expect(record.status).to.equal(3n);
+  });
+
   it("rejects execute when adapter is not registered", async function () {
     const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
@@ -230,6 +288,7 @@ function encodeIntentV2(overrides: {
   refundTo: string;
   quoteSalt?: string;
   sourceToken?: string;
+  expiresAt?: number;
 }) {
   const recipientBytes = ethersLib.zeroPadValue(overrides.recipient, 20);
   const refundBytes = ethersLib.zeroPadValue(overrides.refundTo, 20);
@@ -253,7 +312,7 @@ function encodeIntentV2(overrides: {
         minAmountOut: overrides.minAmountOut ?? 1n,
         recipient: recipientBytes,
         refundTo: refundBytes,
-        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        expiresAt: overrides.expiresAt ?? Math.floor(Date.now() / 1000) + 3600,
         slippageBps: 100,
       },
     ]

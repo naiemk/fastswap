@@ -222,10 +222,13 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         emit SwapExecuted(invoiceId, adapterId, token, routeAmount, floor);
     }
 
-    function refund(bytes32 invoiceId) external onlyRole(RELAYER_ROLE) whenNotPaused nonReentrant {
+    function refund(bytes32 invoiceId) external nonReentrant {
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
         if (record.status != InvoiceStatus.Paid) revert InvalidState();
+        if (block.timestamp <= record.intent.expiresAt && !hasRole(RELAYER_ROLE, msg.sender)) {
+            revert InvalidState();
+        }
 
         address to = _decodeRefundAddress(record.intent.refundTo);
         if (to == address(0)) revert InvalidRecipient();
@@ -274,6 +277,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         if (intent.version != INTENT_VERSION || intent.expiresAt == 0 || intent.recipient.length == 0) {
             revert InvalidIntent();
         }
+        if (intent.refundTo.length != 20) revert InvalidRecipient();
     }
 
     function _tokenMatches(bytes memory intentToken, address token) private pure returns (bool) {
