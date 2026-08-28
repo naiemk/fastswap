@@ -75,11 +75,10 @@ export function createFastSwapParseInvoice(signingSecret: string) {
 async function readEvmInvoiceStatus(chain: Extract<ChainConfig, { type: "evm" }>, invoiceId: string) {
   const provider = new JsonRpcProvider(chain.rpcUrl);
   const contract = new Contract(chain.receiverAddress, FASTSWAP_RECEIVER_ABI, provider);
-  const record = await contract.invoiceRecord(invoiceId);
-  const status = Number(record.status);
-  if (status === InvoiceStatus.Executed) return "complete";
-  if (status === InvoiceStatus.Refunded) return "refunded";
-  if (status === InvoiceStatus.Paid) return "paid";
+  const [status] = await contract.invoiceStatus(invoiceId);
+  if (Number(status) === InvoiceStatus.Executed) return "complete";
+  if (Number(status) === InvoiceStatus.Refunded) return "refunded";
+  if (Number(status) === InvoiceStatus.Paid) return "paid";
   return "waiting_payment";
 }
 
@@ -89,8 +88,8 @@ async function readTronInvoiceStatus(chain: Extract<ChainConfig, { type: "tron" 
   }
   const tronWeb = new TronWeb({ fullHost: chain.fullHost });
   const contract = await tronWeb.contract(TRON_FASTSWAP_RECEIVER_ABI as never, chain.receiverAddress);
-  const record = await contract.invoiceRecord(invoiceId).call();
-  const status = Number(record.status);
+  const record = await contract.invoiceStatus(invoiceId).call();
+  const status = Number(record.status ?? record[0]);
   if (status === InvoiceStatus.Executed) return "complete";
   if (status === InvoiceStatus.Refunded) return "refunded";
   if (status === InvoiceStatus.Paid) return "paid";

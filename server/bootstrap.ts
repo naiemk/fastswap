@@ -189,8 +189,8 @@ async function readSourceInvoiceStatus(chain: ResolvedFastSwapChain, invoiceId: 
   }
   const provider = new JsonRpcProvider(chain.rpcUrl);
   const contract = new Contract(chain.contracts.fastSwapAddress, FASTSWAP_RECEIVER_ABI, provider);
-  const record = await contract.invoiceRecord(invoiceId);
-  return Number(record.status);
+  const [status] = await contract.invoiceStatus(invoiceId);
+  return Number(status);
 }
 
 export const DEFAULT_MAIN_CONFIG = resolveConfigPath();
