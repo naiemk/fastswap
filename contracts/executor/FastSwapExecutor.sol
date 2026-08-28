@@ -264,7 +264,6 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         bytes calldata data
     ) internal whenNotPaused nonReentrant returns (bytes memory) {
         SwapIntent memory intent = _decodeIntent(data);
-        if (invoiceId != keccak256(data)) revert InvalidIntent();
         if (intent.sourceChainId != block.chainid) revert InvalidPayment();
         if (!_tokenMatches(intent.sourceToken, token)) revert TokenMismatch();
         if (amount < intent.minSourceAmount) revert InvalidPayment();
