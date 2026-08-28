@@ -138,7 +138,7 @@ export async function predictStackAddresses(input: {
 }> {
   const owner = getAddress(input.owner);
   const fastSwapFactory = new ContractFactory(input.artifacts.fastSwap.abi as never, input.artifacts.fastSwap.bytecode);
-  const initData = fastSwapFactory.interface.encodeFunctionData("initialize", [owner, input.feeBps]);
+  const initData = fastSwapFactory.interface.encodeFunctionData("initialize(address,uint16)", [owner, input.feeBps]);
 
   const fastSwapImplementationInit = await buildInitCode(input.artifacts.fastSwap);
   const fastSwapImplementation = predictCreateXAddress(
@@ -194,7 +194,7 @@ export async function deployEvmStackViaCreateX(input: {
   await assertCreateXDeployed(provider, createx);
 
   const fastSwapFactory = new ContractFactory(input.artifacts.fastSwap.abi as never, input.artifacts.fastSwap.bytecode);
-  const initData = fastSwapFactory.interface.encodeFunctionData("initialize", [owner, input.feeBps]);
+  const initData = fastSwapFactory.interface.encodeFunctionData("initialize(address,uint16)", [owner, input.feeBps]);
 
   const fastSwapImplementationInit = await buildInitCode(input.artifacts.fastSwap);
   const fastSwapImplementation = await deployViaCreateX(

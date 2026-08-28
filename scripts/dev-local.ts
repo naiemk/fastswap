@@ -93,7 +93,7 @@ async function deployLocalChain(
   ]);
 
   const impl = await deploy(wallet, fastSwapArtifact);
-  const initData = new Contract(impl.target, fastSwapArtifact.abi, wallet).interface.encodeFunctionData("initialize", [
+  const initData = new Contract(impl.target, fastSwapArtifact.abi, wallet).interface.encodeFunctionData("initialize(address,uint16)", [
     wallet.address,
     75,
   ]);

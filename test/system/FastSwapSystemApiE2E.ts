@@ -22,7 +22,7 @@ describe("FastSwap system API (end-to-end)", function () {
     const Proxy = await ethers.getContractFactory("ReceiverProxy");
     const proxy = await Proxy.deploy(
       await implementation.getAddress(),
-      FastSwap.interface.encodeFunctionData("initialize", [owner.address, 75])
+      FastSwap.interface.encodeFunctionData("initialize(address,uint16)", [owner.address, 75])
     );
     const fastSwap = await ethers.getContractAt("FastSwapReceiver", await proxy.getAddress());
     const MockAdapter = await ethers.getContractFactory("MockAdapter");
