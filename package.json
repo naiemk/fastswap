@@ -30,7 +30,7 @@
     "@openzeppelin/contracts-upgradeable": "^5.6.1",
     "better-sqlite3": "^12.9.0",
     "ethers": "^6.16.0",
-    "onchain-invoice": "github:naiemk/onchain-invoice#2526bef",
+    "onchain-invoice": "github:naiemk/onchain-invoice#bedbde8",
     "tronweb": "^6.3.0",
     "vibed-infra": "^0.5.0",
     "yaml": "^2.9.0"
