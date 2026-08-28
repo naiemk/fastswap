@@ -108,7 +108,9 @@ export function quoteToIntent(quote: FastSwapQuote, chains: FastSwapChainConfig[
   const sourceType = chainTypeFor(chains, quote.sourceChainId);
   const targetType = chainTypeFor(chains, quote.targetChainId);
   const refundRaw =
-    "refundAddress" in quote ? String((quote as { refundAddress?: string }).refundAddress ?? "") : "";
+    "refundAddress" in quote && (quote as { refundAddress?: string }).refundAddress
+      ? String((quote as { refundAddress?: string }).refundAddress)
+      : quote.recipient;
   return {
     version: INTENT_VERSION_V2,
     quoteId: normalizeBytes32(quote.quoteId),
