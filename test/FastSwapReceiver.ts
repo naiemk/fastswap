@@ -99,6 +99,40 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     expect(record.status).to.equal(3n);
   });
 
+  it("rejects idle ERC20 balance claim without forwarder pull", async function () {
+    const { payer, recipient, fastSwap, sweeper, token } = await deployFixture();
+    const tokenAddress = await token.getAddress();
+    const victimData = encodeIntentV2({
+      minSourceAmount: ethersLib.parseUnits("100", 18),
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+      sourceToken: tokenAddress,
+    });
+    const attackerData = encodeIntentV2({
+      minSourceAmount: ethersLib.parseUnits("100", 18),
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+      quoteSalt: "attacker",
+      sourceToken: tokenAddress,
+    });
+    const victimId = ethersLib.keccak256(victimData);
+    const attackerId = ethersLib.keccak256(attackerData);
+    const victimAddress = await sweeper.getInvoiceAddress(victimId);
+
+    await token.mint(victimAddress, ethersLib.parseUnits("100", 18));
+    await sweeper.sweepToken(victimId, tokenAddress, victimData);
+
+    await expectRevert(
+      fastSwap.receiveTokenInvoice(tokenAddress, attackerId, ethersLib.parseUnits("100", 18), attackerData),
+      "ERC20InsufficientAllowance"
+    );
+
+    const attackerRecord = await fastSwap.invoiceRecord(attackerId);
+    expect(attackerRecord.status).to.equal(0n);
+  });
+
   it("rejects execute when adapter is not registered", async function () {
     const { payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
@@ -135,9 +169,15 @@ function encodeIntentV2(overrides: {
   minAmountOut?: bigint;
   recipient: string;
   refundTo: string;
+  quoteSalt?: string;
+  sourceToken?: string;
 }) {
   const recipientBytes = ethersLib.zeroPadValue(overrides.recipient, 20);
   const refundBytes = ethersLib.zeroPadValue(overrides.refundTo, 20);
+  const sourceTokenBytes =
+    overrides.sourceToken && overrides.sourceToken !== ethersLib.ZeroAddress
+      ? ethersLib.zeroPadValue(overrides.sourceToken, 20)
+      : "0x";
   return ethersLib.AbiCoder.defaultAbiCoder().encode(
     [
       "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,bytes sourceToken,uint256 minSourceAmount,uint256 destChainId,bytes destToken,uint256 minAmountOut,bytes recipient,bytes refundTo,uint64 expiresAt,uint16 slippageBps)",
@@ -145,9 +185,9 @@ function encodeIntentV2(overrides: {
     [
       {
         version: 2,
-        quoteId: ethersLib.id("quote"),
+        quoteId: ethersLib.id(overrides.quoteSalt ?? "quote"),
         sourceChainId: 1,
-        sourceToken: "0x",
+        sourceToken: sourceTokenBytes,
         minSourceAmount: overrides.minSourceAmount ?? 1n,
         destChainId: 2,
         destToken: "0x",
