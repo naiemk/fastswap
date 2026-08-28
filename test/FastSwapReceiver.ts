@@ -251,7 +251,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
       routeData,
       minAmountOut: 1n,
     });
-    await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "InvalidPayment");
+    await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "Expired");
   });
 
   it("blocks rescue of reserved invoice funds", async function () {

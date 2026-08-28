@@ -73,13 +73,6 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     bytes32 private constant FASTSWAP_STORAGE_LOCATION =
         0xc202e599bf00194ddf9a023608d5682d137afb9d4cebab16a72746b2881aff01;
 
-    event InvoicePaid(
-        bytes32 indexed invoiceId,
-        bytes32 indexed quoteId,
-        address indexed token,
-        uint256 amount,
-        uint256 destChainId
-    );
     event SwapExecuted(
         bytes32 indexed invoiceId,
         bytes32 indexed adapterId,
@@ -100,6 +93,9 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     error InvalidFee();
     error ReentrantCall();
     error InvalidSignature();
+    error Expired();
+    error TokenMismatch();
+    error TransferFailed();
 
     modifier nonReentrant() {
         FastSwapStorage storage $ = _getFastSwapStorage();
@@ -183,7 +179,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
         if (record.status != InvoiceStatus.Paid) revert InvalidState();
-        if (block.timestamp > uint256(record.intent.expiresAt) + 1 hours) revert InvalidPayment();
+        if (block.timestamp > uint256(record.intent.expiresAt) + 1 hours) revert Expired();
 
         address adapterAddr = $.adapters[adapterId];
         if (adapterAddr == address(0)) revert InvalidAdapter();
@@ -269,9 +265,9 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         SwapIntent memory intent = _decodeIntent(data);
         if (invoiceId != keccak256(data)) revert InvalidIntent();
         if (intent.sourceChainId != block.chainid) revert InvalidPayment();
-        if (!_tokenMatches(intent.sourceToken, token)) revert InvalidPayment();
+        if (!_tokenMatches(intent.sourceToken, token)) revert TokenMismatch();
         if (amount < intent.minSourceAmount) revert InvalidPayment();
-        if (block.timestamp > intent.expiresAt) revert InvalidPayment();
+        if (block.timestamp > intent.expiresAt) revert Expired();
 
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
@@ -284,7 +280,6 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         record.invoiceFeeBps = $.feeBps;
         $.reserved[token] += amount;
 
-        emit InvoicePaid(invoiceId, intent.quoteId, token, amount, intent.destChainId);
         return "";
     }
 
@@ -353,7 +348,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     function _transferOut(address token, address to, uint256 amount) private {
         if (token == address(0)) {
             (bool ok,) = to.call{value: amount}("");
-            if (!ok) revert InvalidPayment();
+            if (!ok) revert TransferFailed();
         } else {
             _transferToken(token, to, amount);
         }
