@@ -5,12 +5,14 @@ import {AdapterBase} from "./AdapterBase.sol";
 import {AdapterContext} from "../executor/AdapterContext.sol";
 
 /**
- * @title RubicAdapter
- * @notice Same opaque-router pattern as Rango. Deposit-address routes are rejected off-chain.
+ * @title OpaqueRouterAdapter
+ * @notice Generic allowlisted-router adapter for Rango, Rubic, Transit, Symbiosis, etc.
  * @dev routeData = abi.encode(address router, bytes callData)
  */
-contract RubicAdapter is AdapterBase {
-    constructor(address executor_, address admin_) AdapterBase(executor_, keccak256("rubic"), admin_, new address[](0)) {}
+contract OpaqueRouterAdapter is AdapterBase {
+    constructor(address executor_, bytes32 providerId_, address admin_, address[] memory routers_)
+        AdapterBase(executor_, providerId_, admin_, routers_)
+    {}
 
     function execute(AdapterContext calldata ctx, bytes calldata routeData) external payable override onlyExecutor {
         (address router, bytes memory callData) = _decodeRouterCall(routeData);
