@@ -21,6 +21,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     bytes32 public constant SIGNER_ROLE = keccak256("SIGNER_ROLE");
     uint8 public constant INTENT_VERSION = 2;
+    uint16 public constant MAX_FEE_BPS = 100;
 
     bytes32 private constant EXECUTE_PLAN_TYPEHASH =
         keccak256("ExecutePlan(bytes32 invoiceId,bytes32 adapterId,bytes32 routeDataHash,uint256 minAmountOut)");
@@ -52,6 +53,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         InvoiceStatus status;
         address paidToken;
         uint256 paidAmount;
+        uint16 invoiceFeeBps;
         bytes32 executedAdapterId;
     }
 
@@ -60,6 +62,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         mapping(bytes32 invoiceId => InvoiceRecord record) invoices;
         mapping(bytes32 adapterId => address adapter) adapters;
         uint16 feeBps;
+        address treasury;
         uint256 reentrancyStatus;
     }
 
@@ -84,12 +87,14 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     event InvoiceRefunded(bytes32 indexed invoiceId, address indexed token, address indexed to, uint256 amount);
     event AdapterSet(bytes32 indexed adapterId, address indexed adapter);
     event FeeBpsSet(uint16 feeBps);
+    event TreasurySet(address indexed treasury);
 
     error InvalidIntent();
     error InvalidPayment();
     error InvalidRecipient();
     error InvalidAdapter();
     error InvalidState();
+    error InvalidFee();
     error ReentrantCall();
     error InvalidSignature();
 
@@ -133,6 +138,10 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         return _getFastSwapStorage().feeBps;
     }
 
+    function treasury() external view returns (address) {
+        return _getFastSwapStorage().treasury;
+    }
+
     // --- admin ---
 
     function setAdapter(bytes32 adapterId, address adapterAddr) external onlyRole(ADMIN_ROLE) {
@@ -141,8 +150,15 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     }
 
     function setFeeBps(uint16 feeBps_) external onlyRole(ADMIN_ROLE) {
+        if (feeBps_ > MAX_FEE_BPS) revert InvalidFee();
         _getFastSwapStorage().feeBps = feeBps_;
         emit FeeBpsSet(feeBps_);
+    }
+
+    function setTreasury(address treasury_) external onlyRole(ADMIN_ROLE) {
+        if (treasury_ == address(0)) revert InvalidRecipient();
+        _getFastSwapStorage().treasury = treasury_;
+        emit TreasurySet(treasury_);
     }
 
     function pause() external onlyRole(ADMIN_ROLE) {
@@ -171,11 +187,16 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         uint256 floor = record.intent.minAmountOut;
         _verifyExecutePlan(invoiceId, adapterId, keccak256(routeData), floor, signature);
 
-        uint256 fee = (record.paidAmount * $.feeBps) / 10_000;
+        uint256 fee = (record.paidAmount * record.invoiceFeeBps) / 10_000;
         uint256 routeAmount = record.paidAmount - fee;
         if (routeAmount == 0) revert InvalidPayment();
 
         address token = record.paidToken;
+        address treasuryAddr = $.treasury;
+        if (fee > 0) {
+            if (treasuryAddr == address(0)) revert InvalidRecipient();
+            _transferOut(token, treasuryAddr, fee);
+        }
 
         AdapterContext memory ctx = AdapterContext({
             invoiceId: invoiceId,
@@ -240,6 +261,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         record.status = InvoiceStatus.Paid;
         record.paidToken = token;
         record.paidAmount = amount;
+        record.invoiceFeeBps = $.feeBps;
 
         emit InvoicePaid(invoiceId, intent.quoteId, token, amount, intent.destChainId);
         return "";
