@@ -31,7 +31,7 @@ TRON uses EOA sweep + wallet payout (`sweep.mode: eoa`); no on-chain FastSwap re
 
 ## 3. Post-deploy configure
 
-Grant roles and register adapters. Use the same cold multisig for `DEFAULT_ADMIN_ROLE` and Ownable owner so upgrades and role grants stay aligned.
+Grant roles and register adapters. Use the same cold multisig for `DEFAULT_ADMIN_ROLE`, Ownable `owner`, and CreateX deploy `owner` so upgrades, role grants, and `transferOwnership` stay aligned.
 
 ```bash
 npm run cli -- --configure-role --chain base --role RELAYER_ROLE --account 0x...
