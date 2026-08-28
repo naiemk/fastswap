@@ -218,12 +218,14 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         } else {
             _approveToken(token, adapterAddr, routeAmount);
             IAggregatorAdapter(adapterAddr).execute(ctx, routeData);
-            _approveToken(token, adapterAddr, 0);
         }
 
         record.status = InvoiceStatus.Executed;
         record.executedAdapterId = adapterId;
         $.reserved[token] -= record.paidAmount;
+        if (token != address(0)) {
+            _approveToken(token, adapterAddr, 0);
+        }
         emit SwapExecuted(invoiceId, adapterId, token, routeAmount, floor);
     }
 
@@ -263,7 +265,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         address token,
         uint256 amount,
         bytes calldata data
-    ) internal whenNotPaused returns (bytes memory) {
+    ) internal whenNotPaused nonReentrant returns (bytes memory) {
         SwapIntent memory intent = _decodeIntent(data);
         if (invoiceId != keccak256(data)) revert InvalidIntent();
         if (intent.sourceChainId != block.chainid) revert InvalidPayment();
