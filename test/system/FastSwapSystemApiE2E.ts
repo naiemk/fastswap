@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { Contract, ethers as ethersLib, keccak256, toUtf8Bytes } from "ethers";
+import { ethers as ethersLib, keccak256, toUtf8Bytes } from "ethers";
 import { network } from "hardhat";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { FastSwapServer } from "../../server/server.js";
 import type { FastSwapInvoice, FastSwapStatus } from "../../shared/types.js";
 import { OnchainInvoiceSdk } from "onchain-invoice";
 import { InvoiceStatus } from "../../shared/fastswap-abi.js";
+import { signTestExecutePlan } from "../helpers/execute-plan.js";
 
 const NODE_KEY = "system-test-node";
 
@@ -35,7 +36,7 @@ describe("FastSwap system API (end-to-end)", function () {
 
   it("creates invoice via API, pays, sweeps, executes, and GET invoice shows completion", async function () {
     const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & { ethers: any };
-    const { payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployStack(ethers);
+    const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployStack(ethers);
 
     const directory = await mkdtemp(join(tmpdir(), "fastswap-system-api-"));
     const invoiceSdk = new OnchainInvoiceSdk({
@@ -98,7 +99,16 @@ describe("FastSwap system API (end-to-end)", function () {
       await (await sweeper.sweepEth(invoice.invoiceId, invoice.data)).wait();
 
       const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
-      await (await fastSwap.execute(invoice.invoiceId, adapterId, routeData, 1n)).wait();
+      const record = await fastSwap.invoiceRecord(invoice.invoiceId);
+      const signature = await signTestExecutePlan({
+        signer: owner,
+        fastSwap,
+        invoiceId: invoice.invoiceId,
+        adapterId,
+        routeData,
+        minAmountOut: record.intent.minAmountOut,
+      });
+      await (await fastSwap.execute(invoice.invoiceId, adapterId, routeData, signature)).wait();
 
       const fetched = await getInvoice(baseUrl, invoice.invoiceId);
       expect(fetched.status).to.equal("complete");
@@ -172,7 +182,16 @@ describe("FastSwap system API (end-to-end)", function () {
       await (await sweeper.sweepToken(invoice.invoiceId, sourceAddr, invoice.data)).wait();
 
       const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
-      await (await fastSwap.execute(invoice.invoiceId, adapterId, routeData, 1n)).wait();
+      const record = await fastSwap.invoiceRecord(invoice.invoiceId);
+      const signature = await signTestExecutePlan({
+        signer: owner,
+        fastSwap,
+        invoiceId: invoice.invoiceId,
+        adapterId,
+        routeData,
+        minAmountOut: record.intent.minAmountOut,
+      });
+      await (await fastSwap.execute(invoice.invoiceId, adapterId, routeData, signature)).wait();
       expect(await sink.provider.getBalance(await sink.getAddress())).to.be.gt(0n);
     } finally {
       await server.close();

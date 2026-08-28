@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { network } from "hardhat";
 import { ethers as ethersLib, keccak256, toUtf8Bytes } from "ethers";
+import { mockAdapterId, signTestExecutePlan } from "./helpers/execute-plan.js";
 
 describe("FastSwapReceiver (aggregator executor)", function () {
   async function deployFixture() {
@@ -26,7 +27,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
 
     const MockAdapter = await ethers.getContractFactory("MockAdapter");
     const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), await sink.getAddress());
-    const adapterId = keccak256(toUtf8Bytes("mock"));
+    const adapterId = mockAdapterId("mock");
     await fastSwap.setAdapter(adapterId, await mockAdapter.getAddress());
 
     return { ethers, owner, payer, recipient, sink, fastSwap, token, sweeper, mockAdapter, adapterId };
@@ -53,7 +54,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("executes via mock adapter after payment", async function () {
-    const { payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployFixture();
+    const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
     const data = encodeIntentV2({
       minSourceAmount: sourceAmount,
@@ -68,7 +69,16 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     await sweeper.sweepEth(invoiceId, data);
 
     const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
-    await fastSwap.execute(invoiceId, adapterId, routeData, 1n);
+    const minOut = 1n;
+    const signature = await signTestExecutePlan({
+      signer: owner,
+      fastSwap,
+      invoiceId,
+      adapterId,
+      routeData,
+      minAmountOut: minOut,
+    });
+    await fastSwap.execute(invoiceId, adapterId, routeData, signature);
 
     const record = await fastSwap.invoiceRecord(invoiceId);
     expect(record.status).to.equal(2n);
@@ -134,7 +144,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
   });
 
   it("rejects execute when adapter is not registered", async function () {
-    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
     const data = encodeIntentV2({
       minSourceAmount: sourceAmount,
@@ -147,10 +157,43 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     await sweeper.sweepEth(invoiceId, data);
 
     const badAdapter = keccak256(toUtf8Bytes("missing"));
+    const routeData = "0x";
+    const signature = await signTestExecutePlan({
+      signer: owner,
+      fastSwap,
+      invoiceId,
+      adapterId: badAdapter,
+      routeData,
+      minAmountOut: 1n,
+    });
     await expectRevert(
-      fastSwap.execute(invoiceId, badAdapter, "0x", 1n),
+      fastSwap.execute(invoiceId, badAdapter, routeData, signature),
       "InvalidAdapter"
     );
+  });
+
+  it("rejects execute with tampered minAmountOut in unsigned plan", async function () {
+    const { owner, payer, recipient, fastSwap, sweeper, adapterId } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 100n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await payer.sendTransaction({ to: await sweeper.getInvoiceAddress(invoiceId), value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
+    const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
+    const signature = await signTestExecutePlan({
+      signer: owner,
+      fastSwap,
+      invoiceId,
+      adapterId,
+      routeData,
+      minAmountOut: 1n,
+    });
+    await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "InvalidSignature");
   });
 });
 

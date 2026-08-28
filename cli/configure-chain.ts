@@ -3,7 +3,7 @@ import type { FastSwapConfigFile } from "../config/types.js";
 import { getChainDefinition, resolveChainContracts } from "../config/load.js";
 import { readArtifact } from "./artifacts.js";
 
-const ROLE_NAMES = ["DEFAULT_ADMIN_ROLE", "ADMIN_ROLE", "RELAYER_ROLE"] as const;
+const ROLE_NAMES = ["DEFAULT_ADMIN_ROLE", "ADMIN_ROLE", "RELAYER_ROLE", "SIGNER_ROLE", "PAUSER_ROLE"] as const;
 
 type FastSwapRoleName = (typeof ROLE_NAMES)[number];
 

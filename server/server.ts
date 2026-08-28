@@ -8,6 +8,7 @@ import { encodeFastSwapIntent, quoteIdFromString, quoteToIntent } from "../share
 import { enrichFastSwapInvoiceExplorers } from "../shared/explorers.js";
 import { AuditLog } from "../shared/audit.js";
 import { signInvoice, verifyNodeAuth } from "../shared/signing.js";
+import { signExecutePlan } from "../shared/execute-plan.js";
 import type {
   FastSwapChainConfig,
   FastSwapInvoice,
@@ -46,6 +47,7 @@ export type FastSwapServerOptions = {
   quoteTtlMs?: number;
   feeBps?: bigint;
   defaultSlippageBps?: number;
+  executePlanSignerPrivateKey?: string;
 };
 
 export type FastSwapCaptchaContext = {
@@ -180,6 +182,37 @@ export class FastSwapServer {
           },
         });
         return writeJson(response, 201, invoice);
+      }
+      if (request.method === "POST" && url.pathname.match(/^\/invoices\/[^/]+\/execute-plan$/)) {
+        if (!this.requireNodeAuth(request)) {
+          throw new HttpError(401, "Invalid node credentials");
+        }
+        const invoiceId = decodeURIComponent(url.pathname.slice("/invoices/".length, -"/execute-plan".length));
+        const invoice = this.store.getInvoice(invoiceId);
+        if (!invoice) throw new HttpError(404, "Invoice not found");
+        const body = await readJson<{ adapterId: string; routeData: string; minAmountOut: string }>(request);
+        const pk = this.options.executePlanSignerPrivateKey;
+        if (!pk) throw new HttpError(503, "Execute plan signer not configured");
+        const chain = this.chains.find((c) => c.id === invoice.sourceChainId);
+        const verifyingContract = chain?.fastSwapAddress;
+        if (!verifyingContract) throw new HttpError(400, "Missing fastSwapAddress for source chain");
+        const minOut = BigInt(body.minAmountOut);
+        if (minOut !== BigInt(invoice.targetAmount)) {
+          throw new HttpError(400, "minAmountOut must match invoice targetAmount");
+        }
+        const chainId = BigInt(chain?.id.match(/^\d+$/) ? chain.id : "1");
+        const signature = await signExecutePlan(
+          {
+            invoiceId,
+            adapterId: body.adapterId.startsWith("0x") ? body.adapterId : body.adapterId,
+            routeData: body.routeData.startsWith("0x") ? body.routeData : `0x${body.routeData}`,
+            minAmountOut: minOut,
+          },
+          chainId,
+          verifyingContract,
+          pk
+        );
+        return writeJson(response, 200, { signature, minAmountOut: minOut.toString() });
       }
       if (request.method === "POST" && url.pathname.match(/^\/invoices\/[^/]+\/track$/)) {
         if (!this.requireNodeAuth(request)) {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {IAggregatorAdapter} from "./IAggregatorAdapter.sol";
 import {AdapterContext} from "./AdapterContext.sol";
@@ -12,13 +13,17 @@ import {AdapterContext} from "./AdapterContext.sol";
  *         Users pay via onchain-invoice forwarders; relayer calls `execute` on source chain.
  *         No inventory, no dest-chain payout — aggregators deliver cross-chain.
  */
-abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradeable {
+abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeable, PausableUpgradeable {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
 
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
+    bytes32 public constant SIGNER_ROLE = keccak256("SIGNER_ROLE");
     uint8 public constant INTENT_VERSION = 2;
+
+    bytes32 private constant EXECUTE_PLAN_TYPEHASH =
+        keccak256("ExecutePlan(bytes32 invoiceId,bytes32 adapterId,bytes32 routeDataHash,uint256 minAmountOut)");
 
     enum InvoiceStatus {
         None,
@@ -86,6 +91,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradea
     error InvalidAdapter();
     error InvalidState();
     error ReentrantCall();
+    error InvalidSignature();
 
     modifier nonReentrant() {
         FastSwapStorage storage $ = _getFastSwapStorage();
@@ -102,6 +108,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradea
 
     function __FastSwapExecutor_init(address owner, uint16 feeBps_) internal onlyInitializing {
         __AccessControl_init();
+        __EIP712_init("FastSwap", "1");
         __Pausable_init();
         FastSwapStorage storage $ = _getFastSwapStorage();
         $.reentrancyStatus = _NOT_ENTERED;
@@ -109,6 +116,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradea
         _grantRole(DEFAULT_ADMIN_ROLE, owner);
         _grantRole(ADMIN_ROLE, owner);
         _grantRole(RELAYER_ROLE, owner);
+        _grantRole(SIGNER_ROLE, owner);
     }
 
     // --- views ---
@@ -151,7 +159,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradea
         bytes32 invoiceId,
         bytes32 adapterId,
         bytes calldata routeData,
-        uint256 minAmountOut
+        bytes calldata signature
     ) external onlyRole(RELAYER_ROLE) whenNotPaused nonReentrant {
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
@@ -160,12 +168,14 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradea
         address adapterAddr = $.adapters[adapterId];
         if (adapterAddr == address(0)) revert InvalidAdapter();
 
+        uint256 floor = record.intent.minAmountOut;
+        _verifyExecutePlan(invoiceId, adapterId, keccak256(routeData), floor, signature);
+
         uint256 fee = (record.paidAmount * $.feeBps) / 10_000;
         uint256 routeAmount = record.paidAmount - fee;
         if (routeAmount == 0) revert InvalidPayment();
 
         address token = record.paidToken;
-        uint256 floor = minAmountOut > 0 ? minAmountOut : record.intent.minAmountOut;
 
         AdapterContext memory ctx = AdapterContext({
             invoiceId: invoiceId,
@@ -264,6 +274,36 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradea
             decoded := shr(96, mload(add(refundTo, 32)))
         }
         return decoded;
+    }
+
+    function _verifyExecutePlan(
+        bytes32 invoiceId,
+        bytes32 adapterId,
+        bytes32 routeDataHash,
+        uint256 minAmountOut,
+        bytes calldata signature
+    ) private view {
+        bytes32 structHash = keccak256(abi.encode(EXECUTE_PLAN_TYPEHASH, invoiceId, adapterId, routeDataHash, minAmountOut));
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address signer = _recoverSigner(digest, signature);
+        if (!hasRole(SIGNER_ROLE, signer)) revert InvalidSignature();
+    }
+
+    function _recoverSigner(bytes32 digest, bytes calldata signature) private pure returns (address signer) {
+        if (signature.length != 65) revert InvalidSignature();
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+        if (v < 27) {
+            v += 27;
+        }
+        signer = ecrecover(digest, v, r, s);
+        if (signer == address(0)) revert InvalidSignature();
     }
 
     function _transferOut(address token, address to, uint256 amount) private {

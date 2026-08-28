@@ -66,6 +66,7 @@ export function buildFastSwapServerOptions(config: FastSwapConfigFile): FastSwap
     packs: config.quote.packsUsdMicros.map((usdAmountMicros: string) => ({ usdAmountMicros })),
     quoteClients: createAggregatorClients({ includeMock: true, rangoApiKey: process.env.RANGO_API_KEY }),
     nodeAuthSecret: requireSigningSecret(config),
+    executePlanSignerPrivateKey: process.env.EXECUTE_PLAN_SIGNER_PRIVATE_KEY,
     feeBps: BigInt(config.quote.feeBps),
     quoteTtlMs: config.quote.quoteTtlSec * 1000,
     defaultSlippageBps: 100,

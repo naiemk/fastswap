@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FastSwapServer } from "../server/server.js";
 import { OnchainInvoiceSdk } from "onchain-invoice";
+import { signTestExecutePlan } from "./helpers/execute-plan.js";
 
 describe("FastSwap end-to-end", function () {
   it("creates a quote, creates an invoice, sweeps payment, and executes via adapter", async function () {
@@ -84,7 +85,16 @@ describe("FastSwap end-to-end", function () {
       expect(record.status).to.equal(1n);
 
       const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
-      await fastSwap.execute(invoice.invoiceId, adapterId, routeData, 1n);
+      const recordBefore = await fastSwap.invoiceRecord(invoice.invoiceId);
+      const signature = await signTestExecutePlan({
+        signer: owner,
+        fastSwap,
+        invoiceId: invoice.invoiceId,
+        adapterId,
+        routeData,
+        minAmountOut: recordBefore.intent.minAmountOut,
+      });
+      await fastSwap.execute(invoice.invoiceId, adapterId, routeData, signature);
 
       const executed = await fastSwap.invoiceRecord(invoice.invoiceId);
       expect(executed.status).to.equal(2n);

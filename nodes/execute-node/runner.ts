@@ -1,6 +1,6 @@
 import { Contract, JsonRpcProvider, Wallet, type ContractRunner } from "ethers";
 import type { FastSwapInvoice } from "../../shared/types.js";
-import { FASTSWAP_RECEIVER_ABI, InvoiceStatus } from "../../shared/fastswap-abi.js";
+import { FASTSWAP_RECEIVER_ABI } from "../../shared/fastswap-abi.js";
 import { createAggregatorClients, type IAggregatorClient } from "../../aggregators/index.js";
 import { routeAmountAfterFee } from "../../aggregators/compare.js";
 import type { AggregatorId } from "../../shared/types.js";
@@ -99,14 +99,18 @@ export class ExecuteRunner {
 
     await this.patchTrack(invoice.invoiceId, { status: "executing" });
 
+    let execTxHash: string | undefined;
     if (plan.kind === "evm-contract") {
-      await this.executeEvm(chain, invoice.invoiceId, plan);
-    } else if (plan.kind === "tron-contract" || plan.kind === "tron-eoa") {
-      await this.executeTronEoa(chain, invoice, plan);
+      execTxHash = (await this.executeEvm(chain, invoice.invoiceId, plan)).txHash;
+    } else if (plan.kind === "tron-contract") {
+      console.log("[execute-node] TRON contract execute pending", invoice.invoiceId);
+    } else if (plan.kind === "tron-eoa") {
+      console.warn("[execute-node] TRON EOA path disabled — no custodial bridging", invoice.invoiceId);
+      return;
     }
 
     const status = await client.watch({
-      txHash: invoice.execute?.tx?.txHash,
+      txHash: execTxHash,
       requestId: liveQuote.providerQuoteId,
       chainId: invoice.sourceChainId,
     });
@@ -120,13 +124,40 @@ export class ExecuteRunner {
     }
   }
 
-  private async executeEvm(chain: ExecuteChainConfig, invoiceId: string, plan: ExecutionPlan & { kind: "evm-contract" }) {
+  private async fetchExecuteSignature(
+    invoiceId: string,
+    adapterId: string,
+    routeData: string,
+    minAmountOut: string
+  ): Promise<string> {
+    const response = await fetch(
+      `${this.config.apiBaseUrl.replace(/\/$/, "")}/invoices/${encodeURIComponent(invoiceId)}/execute-plan`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": this.config.nodeAuthSecret,
+        },
+        body: JSON.stringify({ adapterId, routeData, minAmountOut }),
+      }
+    );
+    if (!response.ok) throw new Error(`execute-plan: ${response.status} ${await response.text()}`);
+    const body = (await response.json()) as { signature: string };
+    return body.signature;
+  }
+
+  private async executeEvm(
+    chain: ExecuteChainConfig,
+    invoiceId: string,
+    plan: ExecutionPlan & { kind: "evm-contract" }
+  ): Promise<{ txHash: string }> {
     const pk = process.env[chain.privateKeyEnv];
     if (!pk) throw new Error(`Missing ${chain.privateKeyEnv}`);
     const provider = new JsonRpcProvider(chain.rpcUrl);
     const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
     const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
-    const tx = await contract.execute(invoiceId, plan.adapterId, plan.routeData, plan.minAmountOut);
+    const signature = await this.fetchExecuteSignature(invoiceId, plan.adapterId, plan.routeData, plan.minAmountOut);
+    const tx = await contract.execute(invoiceId, plan.adapterId, plan.routeData, signature);
     const receipt = await tx.wait();
     await this.patchTrack(invoiceId, {
       execute: {
@@ -135,12 +166,7 @@ export class ExecuteRunner {
         tx: { chainId: chain.id, txHash: receipt.hash, status: "confirmed" },
       },
     });
-  }
-
-  private async executeTronEoa(chain: ExecuteChainConfig, invoice: FastSwapInvoice, plan: ExecutionPlan) {
-    // TRON EOA path: funds already in relayer wallet after sweep; submit provider tx directly.
-    console.log("[execute-node] TRON EOA execute", invoice.invoiceId, plan.kind);
-    await this.patchTrack(invoice.invoiceId, { status: "bridging", execute: { status: "submitted" } });
+    return { txHash: receipt.hash };
   }
 
   private async patchTrack(invoiceId: string, patch: Record<string, unknown>) {

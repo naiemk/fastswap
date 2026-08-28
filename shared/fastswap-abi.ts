@@ -1,5 +1,5 @@
 export const FASTSWAP_RECEIVER_ABI = [
-  "function execute(bytes32 invoiceId,bytes32 adapterId,bytes routeData,uint256 minAmountOut)",
+  "function execute(bytes32 invoiceId,bytes32 adapterId,bytes routeData,bytes signature)",
   "function refund(bytes32 invoiceId)",
   "function setAdapter(bytes32 adapterId,address adapterAddr)",
   "function setFeeBps(uint16 feeBps_)",
