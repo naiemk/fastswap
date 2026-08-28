@@ -39,5 +39,5 @@ contract FastSwapReceiver is Receiver, FastSwapExecutor {
         IERC20(token).forceApprove(spender, amount);
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override(Receiver) onlyRole(ADMIN_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override(Receiver) onlyRole(DEFAULT_ADMIN_ROLE) {}
 }

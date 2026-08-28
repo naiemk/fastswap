@@ -20,6 +20,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     bytes32 public constant SIGNER_ROLE = keccak256("SIGNER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     uint8 public constant INTENT_VERSION = 2;
     uint16 public constant MAX_FEE_BPS = 100;
 
@@ -120,8 +121,8 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         $.feeBps = feeBps_;
         _grantRole(DEFAULT_ADMIN_ROLE, owner);
         _grantRole(ADMIN_ROLE, owner);
-        _grantRole(RELAYER_ROLE, owner);
         _grantRole(SIGNER_ROLE, owner);
+        _grantRole(PAUSER_ROLE, owner);
     }
 
     // --- views ---
@@ -161,11 +162,11 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         emit TreasurySet(treasury_);
     }
 
-    function pause() external onlyRole(ADMIN_ROLE) {
+    function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
-    function unpause() external onlyRole(ADMIN_ROLE) {
+    function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
 

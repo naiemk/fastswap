@@ -30,6 +30,8 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     const adapterId = mockAdapterId("mock");
     await fastSwap.setAdapter(adapterId, await mockAdapter.getAddress());
     await fastSwap.setTreasury(owner.address);
+    const relayerRole = await fastSwap.RELAYER_ROLE();
+    await fastSwap.grantRole(relayerRole, owner.address);
 
     return { ethers, owner, payer, recipient, sink, fastSwap, token, sweeper, mockAdapter, adapterId };
   }

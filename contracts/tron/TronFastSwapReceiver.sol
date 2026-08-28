@@ -46,5 +46,5 @@ contract TronFastSwapReceiver is TronReceiver, FastSwapExecutor {
         if (!ok) revert InvalidPayment();
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override(TronReceiver) onlyRole(ADMIN_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override(TronReceiver) onlyRole(DEFAULT_ADMIN_ROLE) {}
 }
