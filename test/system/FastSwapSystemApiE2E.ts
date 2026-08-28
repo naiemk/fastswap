@@ -9,6 +9,7 @@ import type { FastSwapInvoice, FastSwapStatus } from "../../shared/types.js";
 import { OnchainInvoiceSdk } from "onchain-invoice";
 import { InvoiceStatus } from "../../shared/fastswap-abi.js";
 import { signTestExecutePlan } from "../helpers/execute-plan.js";
+import { destFieldsFromIntentData } from "../helpers/intent.js";
 
 const NODE_KEY = "system-test-node";
 
@@ -105,15 +106,24 @@ describe("FastSwap system API (end-to-end)", function () {
 
       const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
       const record = await fastSwap.invoiceRecord(invoice.invoiceId);
+      const dest = destFieldsFromIntentData(invoice.data);
       const signature = await signTestExecutePlan({
         signer: owner,
         fastSwap,
         invoiceId: invoice.invoiceId,
         adapterId,
         routeData,
-        minAmountOut: record.intent.minAmountOut,
+        minAmountOut: record.minAmountOut,
       });
-      await (await fastSwap.execute(invoice.invoiceId, adapterId, routeData, signature)).wait();
+      await (await fastSwap.execute(
+        invoice.invoiceId,
+        adapterId,
+        routeData,
+        dest.destChainId,
+        dest.destToken,
+        dest.recipient,
+        signature
+      )).wait();
 
       const fetched = await getInvoice(baseUrl, invoice.invoiceId);
       expect(fetched.status).to.equal("complete");
@@ -190,15 +200,24 @@ describe("FastSwap system API (end-to-end)", function () {
 
       const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
       const record = await fastSwap.invoiceRecord(invoice.invoiceId);
+      const dest = destFieldsFromIntentData(invoice.data);
       const signature = await signTestExecutePlan({
         signer: owner,
         fastSwap,
         invoiceId: invoice.invoiceId,
         adapterId,
         routeData,
-        minAmountOut: record.intent.minAmountOut,
+        minAmountOut: record.minAmountOut,
       });
-      await (await fastSwap.execute(invoice.invoiceId, adapterId, routeData, signature)).wait();
+      await (await fastSwap.execute(
+        invoice.invoiceId,
+        adapterId,
+        routeData,
+        dest.destChainId,
+        dest.destToken,
+        dest.recipient,
+        signature
+      )).wait();
       expect(await sink.provider.getBalance(await sink.getAddress())).to.be.gt(0n);
     } finally {
       await server.close();

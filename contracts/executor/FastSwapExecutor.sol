@@ -51,11 +51,14 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     }
 
     struct InvoiceRecord {
-        SwapIntent intent;
         InvoiceStatus status;
         address paidToken;
         uint256 paidAmount;
         uint16 invoiceFeeBps;
+        uint64 expiresAt;
+        address refundTo;
+        uint256 minAmountOut;
+        bytes32 destPins;
         bytes32 executedAdapterId;
     }
 
@@ -129,6 +132,11 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         return _getFastSwapStorage().invoices[invoiceId];
     }
 
+    function invoiceStatus(bytes32 invoiceId) external view returns (uint8 status, address token, uint256 amount) {
+        InvoiceRecord storage record = _getFastSwapStorage().invoices[invoiceId];
+        return (uint8(record.status), record.paidToken, record.paidAmount);
+    }
+
     function adapter(bytes32 adapterId) external view returns (address) {
         return _getFastSwapStorage().adapters[adapterId];
     }
@@ -174,18 +182,22 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         bytes32 invoiceId,
         bytes32 adapterId,
         bytes calldata routeData,
+        uint256 destChainId,
+        bytes calldata destToken,
+        bytes calldata recipient,
         bytes calldata signature
     ) external onlyRole(RELAYER_ROLE) whenNotPaused nonReentrant {
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
         if (record.status != InvoiceStatus.Paid) revert InvalidState();
-        if (block.timestamp > uint256(record.intent.expiresAt) + 1 hours) revert Expired();
+        if (block.timestamp > uint256(record.expiresAt) + 1 hours) revert Expired();
+        if (keccak256(abi.encode(destChainId, destToken, recipient)) != record.destPins) revert InvalidIntent();
 
         address adapterAddr = $.adapters[adapterId];
         if (adapterAddr == address(0)) revert InvalidAdapter();
         if (IAggregatorAdapter(adapterAddr).providerId() != adapterId) revert InvalidAdapter();
 
-        uint256 floor = record.intent.minAmountOut;
+        uint256 floor = record.minAmountOut;
         _verifyExecutePlan(invoiceId, adapterId, keccak256(routeData), floor, signature);
 
         uint256 fee = (record.paidAmount * record.invoiceFeeBps) / 10_000;
@@ -203,11 +215,11 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
             invoiceId: invoiceId,
             token: token,
             amount: routeAmount,
-            destChainId: record.intent.destChainId,
-            destToken: record.intent.destToken,
-            recipient: record.intent.recipient,
+            destChainId: destChainId,
+            destToken: destToken,
+            recipient: recipient,
             minAmountOut: floor,
-            refundTo: _decodeRefundAddress(record.intent.refundTo)
+            refundTo: record.refundTo
         });
 
         if (token == address(0)) {
@@ -230,11 +242,11 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
         if (record.status != InvoiceStatus.Paid) revert InvalidState();
-        if (block.timestamp <= record.intent.expiresAt && !hasRole(RELAYER_ROLE, msg.sender)) {
+        if (block.timestamp <= record.expiresAt && !hasRole(RELAYER_ROLE, msg.sender)) {
             revert InvalidState();
         }
 
-        address to = _decodeRefundAddress(record.intent.refundTo);
+        address to = record.refundTo;
         if (to == address(0)) revert InvalidRecipient();
 
         uint256 amount = record.paidAmount;
@@ -273,11 +285,14 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         InvoiceRecord storage record = $.invoices[invoiceId];
         if (record.status != InvoiceStatus.None) revert InvalidState();
 
-        record.intent = intent;
         record.status = InvoiceStatus.Paid;
         record.paidToken = token;
         record.paidAmount = amount;
         record.invoiceFeeBps = $.feeBps;
+        record.expiresAt = intent.expiresAt;
+        record.refundTo = _decodeRefundAddress(intent.refundTo);
+        record.minAmountOut = intent.minAmountOut;
+        record.destPins = keccak256(abi.encode(intent.destChainId, intent.destToken, intent.recipient));
         $.reserved[token] += amount;
 
         return "";
@@ -358,15 +373,5 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         assembly {
             $.slot := FASTSWAP_STORAGE_LOCATION
         }
-    }
-
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        virtual
-        override(AccessControlUpgradeable)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
     }
 }

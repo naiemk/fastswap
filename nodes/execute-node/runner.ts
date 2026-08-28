@@ -3,6 +3,7 @@ import type { FastSwapInvoice } from "../../shared/types.js";
 import { FASTSWAP_RECEIVER_ABI } from "../../shared/fastswap-abi.js";
 import { createAggregatorClients, type IAggregatorClient } from "../../aggregators/index.js";
 import { routeAmountAfterFee } from "../../aggregators/compare.js";
+import { decodeSwapIntent } from "../../shared/encoding.js";
 import type { AggregatorId } from "../../shared/types.js";
 import type { ExecutionPlan } from "../../aggregators/types.js";
 
@@ -117,7 +118,7 @@ export class ExecuteRunner {
 
     let execTxHash: string | undefined;
     if (plan.kind === "evm-contract") {
-      execTxHash = (await this.executeEvm(chain, invoice.invoiceId, plan)).txHash;
+      execTxHash = (await this.executeEvm(chain, invoice, invoice.invoiceId, plan)).txHash;
     } else if (plan.kind === "tron-contract") {
       console.warn("[execute-node] TRON contract execute not wired — skipping", invoice.invoiceId);
       return;
@@ -165,6 +166,7 @@ export class ExecuteRunner {
 
   private async executeEvm(
     chain: ExecuteChainConfig,
+    invoice: FastSwapInvoice,
     invoiceId: string,
     plan: ExecutionPlan & { kind: "evm-contract" }
   ): Promise<{ txHash: string }> {
@@ -173,8 +175,17 @@ export class ExecuteRunner {
     const provider = new JsonRpcProvider(chain.rpcUrl);
     const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
     const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
+    const intent = decodeSwapIntent(invoice.data);
     const signature = await this.fetchExecuteSignature(invoiceId, plan.adapterId, plan.routeData, plan.minAmountOut);
-    const tx = await contract.execute(invoiceId, plan.adapterId, plan.routeData, signature);
+    const tx = await contract.execute(
+      invoiceId,
+      plan.adapterId,
+      plan.routeData,
+      intent.destChainId,
+      intent.destToken,
+      intent.recipient,
+      signature
+    );
     const receipt = await tx.wait();
     await this.patchTrack(invoiceId, {
       execute: {

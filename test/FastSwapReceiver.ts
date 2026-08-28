@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { network } from "hardhat";
 import { ethers as ethersLib, keccak256, toUtf8Bytes } from "ethers";
 import { mockAdapterId, signTestExecutePlan } from "./helpers/execute-plan.js";
+import { destFieldsFromIntentData } from "./helpers/intent.js";
 
 describe("FastSwapReceiver (aggregator executor)", function () {
   async function deployFixture() {
@@ -77,6 +78,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
 
     const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
     const minOut = 1n;
+    const dest = destFieldsFromIntentData(data);
     const signature = await signTestExecutePlan({
       signer: owner,
       fastSwap,
@@ -85,7 +87,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
       routeData,
       minAmountOut: minOut,
     });
-    await fastSwap.execute(invoiceId, adapterId, routeData, signature);
+    await executeWithDest(fastSwap, invoiceId, adapterId, routeData, data, signature);
 
     const record = await fastSwap.invoiceRecord(invoiceId);
     expect(record.status).to.equal(2n);
@@ -251,7 +253,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
       routeData,
       minAmountOut: 1n,
     });
-    await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "Expired");
+    await expectRevert(executeWithDest(fastSwap, invoiceId, adapterId, routeData, data, signature), "Expired");
   });
 
   it("blocks rescue of reserved invoice funds", async function () {
@@ -305,7 +307,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
       minAmountOut: 1n,
     });
     await expectRevert(
-      fastSwap.execute(invoiceId, badAdapter, routeData, signature),
+      executeWithDest(fastSwap, invoiceId, badAdapter, routeData, data, signature),
       "InvalidAdapter"
     );
   });
@@ -331,9 +333,29 @@ describe("FastSwapReceiver (aggregator executor)", function () {
       routeData,
       minAmountOut: 1n,
     });
-    await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "InvalidSignature");
+    await expectRevert(executeWithDest(fastSwap, invoiceId, adapterId, routeData, data, signature), "InvalidSignature");
   });
 });
+
+async function executeWithDest(
+  fastSwap: { execute: (...args: unknown[]) => Promise<unknown> },
+  invoiceId: string,
+  adapterId: string,
+  routeData: string,
+  data: string,
+  signature: string
+) {
+  const dest = destFieldsFromIntentData(data);
+  return fastSwap.execute(
+    invoiceId,
+    adapterId,
+    routeData,
+    dest.destChainId,
+    dest.destToken,
+    dest.recipient,
+    signature
+  );
+}
 
 async function expectRevert(promise: Promise<unknown>, reason: string) {
   try {
