@@ -250,6 +250,33 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "InvalidPayment");
   });
 
+  it("blocks rescue of reserved invoice funds", async function () {
+    const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await payer.sendTransaction({ to: await sweeper.getInvoiceAddress(invoiceId), value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
+    await expectRevert(
+      fastSwap.connect(owner).rescue(ethersLib.ZeroAddress, owner.address, sourceAmount),
+      "InvalidPayment"
+    );
+  });
+
+  it("allows rescue of unreserved donations", async function () {
+    const { owner, payer, fastSwap } = await deployFixture();
+    await payer.sendTransaction({ to: await fastSwap.getAddress(), value: ethersLib.parseEther("0.5") });
+    const before = await owner.provider.getBalance(owner.address);
+    await fastSwap.connect(owner).rescue(ethersLib.ZeroAddress, owner.address, ethersLib.parseEther("0.5"));
+    const after = await owner.provider.getBalance(owner.address);
+    expect(after).to.be.gt(before);
+  });
+
   it("rejects execute when adapter is not registered", async function () {
     const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAggregatorAdapter} from "./IAggregatorAdapter.sol";
 import {AdapterContext} from "./AdapterContext.sol";
 
@@ -62,6 +63,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
     struct FastSwapStorage {
         mapping(bytes32 invoiceId => InvoiceRecord record) invoices;
         mapping(bytes32 adapterId => address adapter) adapters;
+        mapping(address token => uint256 amount) reserved;
         uint16 feeBps;
         address treasury;
         uint256 reentrancyStatus;
@@ -221,6 +223,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
 
         record.status = InvoiceStatus.Executed;
         record.executedAdapterId = adapterId;
+        $.reserved[token] -= record.paidAmount;
         emit SwapExecuted(invoiceId, adapterId, token, routeAmount, floor);
     }
 
@@ -239,9 +242,18 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         address token = record.paidToken;
         record.status = InvoiceStatus.Refunded;
         record.paidAmount = 0;
+        $.reserved[token] -= amount;
 
         _transferOut(token, to, amount);
         emit InvoiceRefunded(invoiceId, token, to, amount);
+    }
+
+    function rescue(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+        if (to == address(0)) revert InvalidRecipient();
+        FastSwapStorage storage $ = _getFastSwapStorage();
+        uint256 balance = token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
+        if (amount > balance - $.reserved[token]) revert InvalidPayment();
+        _transferOut(token, to, amount);
     }
 
     // --- invoice hook ---
@@ -267,6 +279,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         record.paidToken = token;
         record.paidAmount = amount;
         record.invoiceFeeBps = $.feeBps;
+        $.reserved[token] += amount;
 
         emit InvoicePaid(invoiceId, intent.quoteId, token, amount, intent.destChainId);
         return "";
