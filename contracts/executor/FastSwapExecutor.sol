@@ -183,6 +183,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
 
         address adapterAddr = $.adapters[adapterId];
         if (adapterAddr == address(0)) revert InvalidAdapter();
+        if (IAggregatorAdapter(adapterAddr).providerId() != adapterId) revert InvalidAdapter();
 
         uint256 floor = record.intent.minAmountOut;
         _verifyExecutePlan(invoiceId, adapterId, keccak256(routeData), floor, signature);

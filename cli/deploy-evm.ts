@@ -26,6 +26,7 @@ export async function predictEvmAddresses(config: FastSwapConfigFile, owner: str
   return predictStackAddresses({
     createx: resolveCreateXAddress(config),
     owner,
+    feeBps: Number(config.quote.feeBps),
     salts: getResolvedDeploySalts(config),
     artifacts,
   });
@@ -64,6 +65,7 @@ export async function deployEvmStackToChain(input: {
     signer: wallet,
     createx: resolveCreateXAddress(input.config),
     owner,
+    feeBps: Number(input.config.quote.feeBps),
     salts: getResolvedDeploySalts(input.config),
     artifacts,
     onProgress:

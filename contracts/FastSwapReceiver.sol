@@ -15,9 +15,9 @@ contract FastSwapReceiver is Receiver, FastSwapExecutor {
 
     receive() external payable {}
 
-    function initialize(address initialOwner) public override(Receiver) initializer {
+    function initialize(address initialOwner, uint16 feeBps_) public initializer {
         __Ownable_init(initialOwner);
-        __FastSwapExecutor_init(initialOwner, 75);
+        __FastSwapExecutor_init(initialOwner, feeBps_);
     }
 
     function _executeInvoice(

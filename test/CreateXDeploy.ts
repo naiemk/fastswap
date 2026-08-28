@@ -38,7 +38,7 @@ describe("CreateX deployment", function () {
 
     const owner = "0x000000000000000000000000000000000000dEaD";
     const fastSwapFactory = new ContractFactory(fastSwap.abi, fastSwap.bytecode);
-    const initData = fastSwapFactory.interface.encodeFunctionData("initialize", [owner]);
+    const initData = fastSwapFactory.interface.encodeFunctionData("initialize", [owner, 75]);
 
     const fastSwapImplInit = await buildInitCode(fastSwap);
     const fastSwapImpl = predictCreateXAddress(CREATEX_ADDRESS, salts.fastSwapImplementation, fastSwapImplInit);
