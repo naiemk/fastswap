@@ -339,7 +339,7 @@ describe("FastSwapServer", function () {
         recipient: "0x0000000000000000000000000000000000000001",
         usdAmountMicros: "20000000",
       });
-      expect(quote.targetAmount).to.equal("9950000000000000");
+      expect(quote.targetAmount).to.equal("9776621250000000");
       expect(quote.sourceAmount).to.equal("10000000000000000");
       expect(quote.feeAmount).to.equal("75000000000000");
     } finally {

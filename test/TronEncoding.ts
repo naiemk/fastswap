@@ -101,6 +101,8 @@ describe("FastSwap intent encoding (v2, chain-type aware)", function () {
 });
 
 function baseQuote(overrides: Partial<FastSwapQuote>): FastSwapQuote {
+  const sourceChainId = overrides.sourceChainId ?? "11155111";
+  const defaultRefund = sourceChainId === "3448148188" ? TRON_RECIPIENT : EVM_RECIPIENT;
   return {
     quoteId: "0x" + "11".repeat(32),
     expiresAt: Date.now() + 60_000,
@@ -111,6 +113,7 @@ function baseQuote(overrides: Partial<FastSwapQuote>): FastSwapQuote {
     targetToken: "native",
     targetAmount: "950000",
     recipient: TRON_RECIPIENT,
+    refundAddress: defaultRefund,
     feeAmount: "0",
     slippageBps: 100,
     selectedProvider: "mock",

@@ -107,10 +107,12 @@ export function quoteToIntent(quote: FastSwapQuote, chains: FastSwapChainConfig[
   const chainIds = chainNumericIds(chains);
   const sourceType = chainTypeFor(chains, quote.sourceChainId);
   const targetType = chainTypeFor(chains, quote.targetChainId);
-  const refundRaw =
-    "refundAddress" in quote && (quote as { refundAddress?: string }).refundAddress
-      ? String((quote as { refundAddress?: string }).refundAddress)
-      : quote.recipient;
+  const refundRaw = quote.refundAddress?.trim() ? String(quote.refundAddress) : "";
+  const refundTo = refundRaw
+    ? recipientToBytes(refundRaw, sourceType)
+    : sourceType === targetType
+      ? recipientToBytes(quote.recipient, sourceType)
+      : "0x";
   return {
     version: INTENT_VERSION_V2,
     quoteId: normalizeBytes32(quote.quoteId),
@@ -121,7 +123,7 @@ export function quoteToIntent(quote: FastSwapQuote, chains: FastSwapChainConfig[
     destToken: tokenToBytes(quote.targetToken, targetType),
     minAmountOut: BigInt(quote.targetAmount),
     recipient: recipientToBytes(quote.recipient, targetType),
-    refundTo: refundRaw ? recipientToBytes(refundRaw, sourceType) : "0x",
+    refundTo,
     expiresAt: BigInt(Math.floor(quote.expiresAt / 1000)),
     slippageBps: BigInt(quote.slippageBps ?? 100),
   };
