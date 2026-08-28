@@ -37,13 +37,16 @@ contract TronFastSwapReceiver is TronReceiver, FastSwapExecutor {
     }
 
     function _trc20Transfer(address token, address to, uint256 amount) private {
-        (bool ok,) = token.call(abi.encodeWithSelector(ITrc20.transfer.selector, to, amount));
-        if (!ok) revert InvalidPayment();
+        (bool ok, bytes memory result) = token.call(abi.encodeCall(ITrc20.transfer, (to, amount)));
+        if (!ok || (result.length != 0 && !abi.decode(result, (bool)))) revert InvalidPayment();
     }
 
     function _trc20Approve(address token, address spender, uint256 amount) private {
-        (bool ok,) = token.call(abi.encodeWithSignature("approve(address,uint256)", spender, amount));
-        if (!ok) revert InvalidPayment();
+        (bool ok0, bytes memory result0) = token.call(abi.encodeCall(ITrc20.approve, (spender, 0)));
+        if (!ok0 || (result0.length != 0 && !abi.decode(result0, (bool)))) revert InvalidPayment();
+        if (amount == 0) return;
+        (bool ok, bytes memory result) = token.call(abi.encodeCall(ITrc20.approve, (spender, amount)));
+        if (!ok || (result.length != 0 && !abi.decode(result, (bool)))) revert InvalidPayment();
     }
 
     function _authorizeUpgrade(address newImplementation) internal override(TronReceiver) onlyRole(DEFAULT_ADMIN_ROLE) {}

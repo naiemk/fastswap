@@ -103,7 +103,8 @@ export class ExecuteRunner {
     if (plan.kind === "evm-contract") {
       execTxHash = (await this.executeEvm(chain, invoice.invoiceId, plan)).txHash;
     } else if (plan.kind === "tron-contract") {
-      console.log("[execute-node] TRON contract execute pending", invoice.invoiceId);
+      console.warn("[execute-node] TRON contract execute not wired — skipping", invoice.invoiceId);
+      return;
     } else if (plan.kind === "tron-eoa") {
       console.warn("[execute-node] TRON EOA path disabled — no custodial bridging", invoice.invoiceId);
       return;
