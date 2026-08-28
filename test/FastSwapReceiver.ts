@@ -181,7 +181,10 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     const before = await recipient.provider.getBalance(recipient.address);
     await fastSwap.connect(recipient).refund(invoiceId);
     const after = await recipient.provider.getBalance(recipient.address);
-    expect(after - before).to.equal(sourceAmount);
+    expect(after - before).to.be.closeTo(sourceAmount, ethersLib.parseEther("0.001"));
+
+    const record = await fastSwap.invoiceRecord(invoiceId);
+    expect(record.status).to.equal(3n);
   });
 
   it("rejects non-relayer refund before expiry", async function () {
