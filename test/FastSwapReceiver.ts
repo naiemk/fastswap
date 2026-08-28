@@ -143,6 +143,21 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     expect(attackerRecord.status).to.equal(0n);
   });
 
+  it("rejects owner executeInvoice without a recorded payment", async function () {
+    const { owner, recipient, fastSwap } = await deployFixture();
+    const data = encodeIntentV2({
+      minSourceAmount: 1n,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await expectRevert(
+      fastSwap.connect(owner).executeInvoice(invoiceId, ethersLib.ZeroAddress, 1n, data),
+      "InvalidPayment"
+    );
+  });
+
   it("rejects execute when adapter is not registered", async function () {
     const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");

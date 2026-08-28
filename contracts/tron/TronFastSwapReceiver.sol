@@ -23,6 +23,8 @@ contract TronFastSwapReceiver is TronReceiver, FastSwapExecutor {
         uint256 amount,
         bytes calldata data
     ) internal override(TronReceiver) returns (bytes memory) {
+        TronReceiver.InvoicePayment memory payment = this.invoicePayment(invoiceId);
+        if (!payment.paid || payment.token != token || payment.amount != amount) revert InvalidPayment();
         return _executeFastSwapInvoice(invoiceId, token, amount, data);
     }
 

@@ -26,6 +26,8 @@ contract FastSwapReceiver is Receiver, FastSwapExecutor {
         uint256 amount,
         bytes calldata data
     ) internal override(Receiver) returns (bytes memory) {
+        Receiver.InvoicePayment memory payment = this.invoicePayment(invoiceId);
+        if (!payment.paid || payment.token != token || payment.amount != amount) revert InvalidPayment();
         return _executeFastSwapInvoice(invoiceId, token, amount, data);
     }
 
