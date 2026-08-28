@@ -22,6 +22,7 @@ export type ExecuteRunnerConfig = {
   pollIntervalMs: number;
   progressPath: string;
   auditLogPath?: string;
+  maxDeviationBps?: bigint;
   chains: ExecuteChainConfig[];
   clients?: IAggregatorClient[];
 };
@@ -91,6 +92,21 @@ export class ExecuteRunner {
 
     const client = this.clients.find((c) => c.id === invoice.selectedProvider) ?? this.clients[0];
     const liveQuote = await client.quote(quoteReq);
+    const quotedMin = BigInt(invoice.targetAmount);
+    const liveDest = BigInt(liveQuote.destAmountOut);
+    const maxDev = this.config.maxDeviationBps ?? 100n;
+    const deviationFloor = (quotedMin * (10_000n - maxDev)) / 10_000n;
+    if (liveDest < deviationFloor) {
+      console.warn("[execute-node] live dest below deviation floor — refunding", invoice.invoiceId, {
+        liveDest: liveDest.toString(),
+        deviationFloor: deviationFloor.toString(),
+      });
+      if (planKindSupportsRefund(chain)) {
+        await this.refund(chain, invoice.invoiceId);
+      }
+      return;
+    }
+
     const plan = await client.buildExecution(quoteReq, liveQuote, {
       fromAddress: chain.fastSwapAddress,
       actualSourceAmount: routeAmount.toString(),
@@ -170,6 +186,21 @@ export class ExecuteRunner {
     return { txHash: receipt.hash };
   }
 
+  private async refund(chain: ExecuteChainConfig, invoiceId: string) {
+    if (chain.type !== "evm") {
+      console.warn("[execute-node] refund not wired for chain type", chain.id);
+      return;
+    }
+    const pk = process.env[chain.privateKeyEnv];
+    if (!pk) throw new Error(`Missing ${chain.privateKeyEnv}`);
+    const provider = new JsonRpcProvider(chain.rpcUrl);
+    const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
+    const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
+    const tx = await contract.refund(invoiceId);
+    await tx.wait();
+    await this.patchTrack(invoiceId, { status: "refunded" });
+  }
+
   private async patchTrack(invoiceId: string, patch: Record<string, unknown>) {
     await fetch(`${this.config.apiBaseUrl.replace(/\/$/, "")}/invoices/${encodeURIComponent(invoiceId)}/track`, {
       method: "POST",
@@ -180,4 +211,8 @@ export class ExecuteRunner {
       body: JSON.stringify(patch),
     });
   }
+}
+
+function planKindSupportsRefund(chain: ExecuteChainConfig): boolean {
+  return chain.type === "evm" && Boolean(chain.fastSwapAddress);
 }

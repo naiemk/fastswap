@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IAggregatorClient } from "../aggregators/IAggregatorClient.js";
-import { compareQuotesByDestAmount, pickBestQuote, protocolFeeAmount } from "../aggregators/compare.js";
+import { compareQuotesByDestAmount, pickBestQuote, applySlippageFloor, protocolFeeAmount, routeAmountAfterFee } from "../aggregators/compare.js";
 import type { AggregatorId, FastSwapChainConfig, FastSwapQuote, FastSwapQuoteRequest, FastSwapTokenConfig } from "../shared/types.js";
 import { resolveTokenPriceUsdMicros, type PriceFetch } from "./price-sources.js";
 
@@ -21,10 +21,13 @@ export class QuoteEngine {
     if (sourceAmount <= 0n) throw new Error("Invalid source amount");
 
     const slippageBps = request.slippageBps ?? this.options.defaultSlippageBps ?? 100;
+    const routeAmount = routeAmountAfterFee(sourceAmount, this.options.feeBps);
+    if (routeAmount <= 0n) throw new Error("Invalid source amount after fee");
+
     const quoteReq = {
       sourceChainId: request.sourceChainId,
       sourceToken: request.sourceToken,
-      sourceAmount: sourceAmount.toString(),
+      sourceAmount: routeAmount.toString(),
       destChainId: request.targetChainId,
       destToken: request.targetToken,
       recipient: request.recipient,
@@ -50,6 +53,7 @@ export class QuoteEngine {
     if (!selected) throw new Error("No quote selected");
 
     const fee = protocolFeeAmount(sourceAmount, this.options.feeBps);
+    const minDestOut = applySlippageFloor(BigInt(selected.destAmountOut), slippageBps);
 
     return {
       quoteId: randomUUID(),
@@ -59,7 +63,7 @@ export class QuoteEngine {
       sourceAmount: sourceAmount.toString(),
       targetChainId: request.targetChainId,
       targetToken: request.targetToken,
-      targetAmount: selected.destAmountOut,
+      targetAmount: minDestOut.toString(),
       recipient: request.recipient,
       refundAddress: request.refundAddress,
       feeAmount: fee.toString(),

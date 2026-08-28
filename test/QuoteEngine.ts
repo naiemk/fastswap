@@ -45,7 +45,7 @@ describe("QuoteEngine (aggregators)", function () {
     });
 
     expect(quote.selectedProvider).to.equal("mock");
-    expect(BigInt(quote.targetAmount)).to.equal(995_000_000_000_000_000n);
+    expect(BigInt(quote.targetAmount)).to.equal(977_662_125_000_000_000n);
     expect(quote.sources.length).to.be.gte(2);
   });
 });

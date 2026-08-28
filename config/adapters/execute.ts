@@ -13,6 +13,7 @@ export function toExecuteNodeConfig(config: FastSwapConfigFile): ExecuteRunnerCo
     pollIntervalMs: config.nodes?.execute?.pollIntervalMs ?? config.executeNode?.pollIntervalMs ?? 15_000,
     progressPath: config.nodes?.execute?.progressPath ?? "data/execute-progress.json",
     auditLogPath: config.server.auditLogPath,
+    maxDeviationBps: BigInt(config.quote.maxDeviationBps),
     chains: config["active-chains"]
       .map((key) => config.chains.find((c) => c.key === key))
       .filter((c): c is NonNullable<typeof c> => Boolean(c))
