@@ -24,6 +24,12 @@ const ARTIFACT_CANDIDATES: Record<string, string[]> = {
     "artifacts/contracts/vendor/MockERC20.sol/MockERC20.json",
     "artifacts/onchain-invoice/contracts/mocks/MockERC20.sol/MockERC20.json",
   ],
+  "MockAdapter": [
+    "artifacts/contracts/adapters/MockAdapter.sol/MockAdapter.json",
+  ],
+  "LocalProviderRouter": [
+    "artifacts/contracts/adapters/LocalProviderRouter.sol/LocalProviderRouter.json",
+  ],
   "Forwarder": [
     "artifacts/onchain-invoice/contracts/Forwarder.sol/Forwarder.json",
     "artifacts/contracts/Forwarder.sol/Forwarder.json",

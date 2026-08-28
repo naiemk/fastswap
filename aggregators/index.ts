@@ -20,23 +20,37 @@ export type AggregatorRegistryOptions = {
   rangoApiKey?: string;
   /** When true, include live Providers. Default false (hermetic Local Provider only). */
   live?: boolean;
+  /** Default Local Provider Router when a chain-specific address is not set. */
+  mockRouter?: string;
+  /** Local Provider Router per source chain id. */
+  mockRouters?: Record<string, string>;
 };
 
+export function mockRoutersFromChains(chains: Array<{ id: string; router?: string }>): Record<string, string> {
+  const routers: Record<string, string> = {};
+  for (const chain of chains) {
+    if (chain.router) routers[chain.id] = chain.router;
+  }
+  return routers;
+}
+
 export function createAggregatorClientsFromEnv(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  extra: Pick<AggregatorRegistryOptions, "mockRouter" | "mockRouters"> = {}
 ): IAggregatorClient[] {
   const live = env.FASTSWAP_LIVE_PROVIDERS !== "0";
   return createAggregatorClients({
     includeMock: !live,
     rangoApiKey: env.RANGO_API_KEY,
     live,
+    ...extra,
   });
 }
 
 export function createAggregatorClients(options: AggregatorRegistryOptions = {}): IAggregatorClient[] {
   const clients: IAggregatorClient[] = [];
   if (options.includeMock !== false) {
-    clients.push(new MockAggregatorClient());
+    clients.push(new MockAggregatorClient(9950n, options.mockRouter, options.mockRouters ?? {}));
   }
   if (options.live) {
     const rangoKey = options.rangoApiKey ?? process.env.RANGO_API_KEY;

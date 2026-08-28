@@ -8,8 +8,17 @@ export class MockAggregatorClient implements IAggregatorClient {
 
   constructor(
     private readonly rateBps: bigint = 9950n,
-    private readonly router: string = "0x0000000000000000000000000000000000000001"
-  ) {}
+    router?: string,
+    private readonly routersByChainId: Record<string, string> = {}
+  ) {
+    this.router = router ?? "0x0000000000000000000000000000000000000001";
+  }
+
+  private readonly router: string;
+
+  private routerFor(chainId: string): string {
+    return this.routersByChainId[chainId] ?? this.router;
+  }
 
   async quote(request: QuoteRequest): Promise<AggregatorQuote> {
     const inAmt = BigInt(request.sourceAmount);
@@ -29,15 +38,16 @@ export class MockAggregatorClient implements IAggregatorClient {
     quote: AggregatorQuote,
     _context: BuildExecutionContext
   ): Promise<ExecutionPlan> {
+    const router = this.routerFor(request.sourceChainId);
     return {
       kind: "evm-contract",
       chainId: request.sourceChainId,
       fromAddress: _context.fromAddress,
       adapterId: ADAPTER_IDS.mock,
-      routeData: encodeRouterRouteDataSync(this.router, "0x"),
+      routeData: encodeRouterRouteDataSync(router, "0x"),
       minAmountOut: quote.destAmountOut,
-      router: this.router,
-      tx: { to: this.router, data: "0x", value: "0" },
+      router,
+      tx: { to: router, data: "0x", value: "0" },
     };
   }
 

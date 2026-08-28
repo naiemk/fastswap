@@ -27,4 +27,26 @@ describe("createAggregatorClients", function () {
     expect(ids).to.not.include("mock");
     expect(ids).to.include.members(["rubic", "symbiosis", "transit"]);
   });
+
+  it("Local Provider buildExecution targets the configured source-chain Router", async function () {
+    const router = "0x0000000000000000000000000000000000000123";
+    const [client] = createAggregatorClients({ mockRouters: { "101": router } });
+    const request = {
+      sourceChainId: "101",
+      sourceToken: "0x0000000000000000000000000000000000000000",
+      sourceAmount: "1000",
+      destChainId: "202",
+      destToken: "0x0000000000000000000000000000000000000000",
+      recipient: "0x0000000000000000000000000000000000000001",
+    };
+    const quote = await client.quote(request);
+    const plan = await client.buildExecution(request, quote, {
+      fromAddress: "0x0000000000000000000000000000000000000002",
+      actualSourceAmount: "1000",
+      slippageBps: 100,
+    });
+    expect(plan.kind).to.equal("evm-contract");
+    if (plan.kind !== "evm-contract") return;
+    expect(plan.router).to.equal(router);
+  });
 });

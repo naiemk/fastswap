@@ -10,6 +10,7 @@ export function applyOperatorEnvDefaults(): void {
   if (evm) {
     process.env.SWEEP_EVM_PRIVATE_KEY ??= evm;
     process.env.RELAY_EVM_PRIVATE_KEY ??= evm;
+    process.env.EXECUTE_PLAN_SIGNER_PRIVATE_KEY ??= evm;
   }
   if (tron) {
     const normalized = tron.replace(/^0x/, "");

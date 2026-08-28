@@ -1,56 +1,67 @@
 #!/usr/bin/env tsx
 /**
- * Local dev harness: two Hardhat nodes, deploy FastSwap stack, write FastSwapConfig.local.yaml,
- * then run production API + sweep + execute workers.
+ * Local dev harness: two Hardhat nodes, deploy FastSwap stack with Local Provider
+ * adapter + Router, write FastSwapConfig.local.yaml, then run API + sweep + execute workers.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Contract, ContractFactory, JsonRpcProvider, Wallet, ZeroAddress } from "ethers";
+import { Wallet } from "ethers";
 import { stringify } from "yaml";
-import { readArtifact } from "../cli/artifacts.js";
 import type { FastSwapConfigFile } from "../config/types.js";
+import {
+  applyLocalOperatorEnv,
+  deployLocalFastSwapChain,
+  LOCAL_OPERATOR_PRIVATE_KEY,
+  spawnHardhatNode,
+  waitForRpc,
+  type DeployedLocalChain,
+} from "./local-stack.js";
 
 const HOST = "127.0.0.1";
 const ALICE_PORT = 9545;
 const BOB_PORT = 9546;
-const PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const LOCAL_CONFIG = join(process.cwd(), "FastSwapConfig.local.yaml");
 const DATA_DIR = join(process.cwd(), "data", "local");
-
-type LocalChain = {
-  key: string;
-  id: string;
-  name: string;
-  rpcUrl: string;
-  fastSwap: string;
-  sweeper: string;
-  stable: { symbol: string; address: string; decimals: number };
-};
 
 const children: ChildProcess[] = [];
 
 async function main() {
-  process.env.EVM_PRIVATE_KEY = PRIVATE_KEY;
   process.env.API_SIGNING_SECRET = process.env.API_SIGNING_SECRET ?? "local-dev-signing-secret-32chars-min";
   process.env.FASTSWAP_CONFIG_PATH = LOCAL_CONFIG;
   process.env.FASTSWAP_LIVE_PROVIDERS = "0";
+  applyLocalOperatorEnv(["alice", "bob"]);
 
   await rm(DATA_DIR, { recursive: true, force: true });
   await mkdir(DATA_DIR, { recursive: true });
 
   await run("npm", ["run", "compile"]);
 
-  const aliceNode = spawnHardhatNode("alice", ALICE_PORT);
-  const bobNode = spawnHardhatNode("bob", BOB_PORT);
+  const aliceNode = spawnHardhatNode({ port: ALICE_PORT, chainId: 101, hostname: HOST });
+  const bobNode = spawnHardhatNode({ port: BOB_PORT, chainId: 202, hostname: HOST });
   children.push(aliceNode, bobNode);
-  await sleep(2000);
+  await waitForRpc(`http://${HOST}:${ALICE_PORT}`, 101);
+  await waitForRpc(`http://${HOST}:${BOB_PORT}`, 202);
 
-  const alice = await deployLocalChain("alice", "101", "AliceChain", `http://${HOST}:${ALICE_PORT}`, "DumUSDT");
-  const bob = await deployLocalChain("bob", "202", "BobChain", `http://${HOST}:${BOB_PORT}`, "BobUSDC");
+  const alice = await deployLocalFastSwapChain({
+    key: "alice",
+    id: "101",
+    name: "AliceChain",
+    rpcUrl: `http://${HOST}:${ALICE_PORT}`,
+    stableSymbol: "DumUSDT",
+  });
+  const bob = await deployLocalFastSwapChain({
+    key: "bob",
+    id: "202",
+    name: "BobChain",
+    rpcUrl: `http://${HOST}:${BOB_PORT}`,
+    stableSymbol: "BobUSDC",
+  });
 
   await writeLocalConfig([alice, bob]);
   console.log(`[dev-local] wrote ${LOCAL_CONFIG}`);
+  console.log(`[dev-local] alice adapter=${alice.adapter} router=${alice.router}`);
+  console.log(`[dev-local] bob adapter=${bob.adapter} router=${bob.router}`);
 
   const procs = [
     spawnProc("server", ["npm", "run", "server", LOCAL_CONFIG]),
@@ -76,49 +87,7 @@ async function main() {
   });
 }
 
-async function deployLocalChain(
-  key: string,
-  id: string,
-  name: string,
-  rpcUrl: string,
-  stableSymbol: string
-): Promise<LocalChain> {
-  const provider = new JsonRpcProvider(rpcUrl);
-  await provider.getBlockNumber();
-  const wallet = new Wallet(PRIVATE_KEY, provider);
-  const [fastSwapArtifact, proxyArtifact, sweeperArtifact, tokenArtifact] = await Promise.all([
-    readArtifact("contracts/FastSwapReceiver.sol/FastSwapReceiver.json"),
-    readArtifact("ReceiverProxy"),
-    readArtifact("InvoiceSweeper"),
-    readArtifact("MockERC20"),
-  ]);
-
-  const impl = await deploy(wallet, fastSwapArtifact);
-  const initData = new Contract(impl.target, fastSwapArtifact.abi, wallet).interface.encodeFunctionData("initialize(address,uint16)", [
-    wallet.address,
-    75,
-  ]);
-  const proxy = await deploy(wallet, proxyArtifact, impl.target, initData);
-  const sweeper = await deploy(wallet, sweeperArtifact, proxy.target);
-  const token = (await deploy(wallet, tokenArtifact, `Local ${stableSymbol}`, stableSymbol, 6)) as Contract;
-  await (await token.mint(wallet.address, 1_000_000_000_000n)).wait();
-  await (await token.mint(proxy.target, 10_000_000_000n)).wait();
-  const nativeLiq = 25n * 10n ** 18n;
-  const fastSwap = new Contract(proxy.target, fastSwapArtifact.abi, wallet);
-  await (await fastSwap.addLiquidity(ZeroAddress, nativeLiq, { value: nativeLiq })).wait();
-
-  return {
-    key,
-    id,
-    name,
-    rpcUrl,
-    fastSwap: String(proxy.target),
-    sweeper: String(sweeper.target),
-    stable: { symbol: stableSymbol, address: String(token.target), decimals: 6 },
-  };
-}
-
-async function writeLocalConfig(chains: LocalChain[]) {
+async function writeLocalConfig(chains: DeployedLocalChain[]) {
   const config: FastSwapConfigFile = {
     version: 1,
     "active-chains": chains.map((c) => c.key),
@@ -153,7 +122,7 @@ async function writeLocalConfig(chains: LocalChain[]) {
     executeNode: { pollIntervalMs: 2500 },
     deploy: {
       createx: "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
-      owner: new Wallet(PRIVATE_KEY).address,
+      owner: new Wallet(LOCAL_OPERATOR_PRIVATE_KEY).address,
       salts: { namespace: "fastswap-local", version: "1" },
       contracts: {
         fastSwapImplementation: "",
@@ -179,6 +148,7 @@ async function writeLocalConfig(chains: LocalChain[]) {
       explorerUrl: "http://localhost",
       confirmations: 0,
       startBlock: 0,
+      router: chain.router,
       contracts: {
         fastSwapAddress: chain.fastSwap,
         sweeperAddress: chain.sweeper,
@@ -207,13 +177,6 @@ async function writeLocalConfig(chains: LocalChain[]) {
   await writeFile(LOCAL_CONFIG, stringify(config, { lineWidth: 0 }), "utf8");
 }
 
-function spawnHardhatNode(name: string, port: number) {
-  return spawn("npx", ["hardhat", "node", "--hostname", HOST, "--port", String(port)], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
 function spawnProc(label: string, cmd: string[]) {
   const child = spawn(cmd[0], cmd.slice(1), {
     cwd: process.cwd(),
@@ -226,22 +189,11 @@ function spawnProc(label: string, cmd: string[]) {
   return child;
 }
 
-async function deploy(signer: Wallet, artifact: { abi: unknown; bytecode: string }, ...args: unknown[]) {
-  const factory = new ContractFactory(artifact.abi as never, artifact.bytecode, signer);
-  const contract = await factory.deploy(...args);
-  await contract.waitForDeployment();
-  return contract;
-}
-
 function run(cmd: string, args: string[]) {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(cmd, args, { cwd: process.cwd(), stdio: "inherit" });
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
   });
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 main().catch((error) => {

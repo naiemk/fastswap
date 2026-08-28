@@ -170,13 +170,13 @@ export class ExecuteRunner {
     invoiceId: string,
     plan: ExecutionPlan & { kind: "evm-contract" }
   ): Promise<{ txHash: string }> {
-    const pk = process.env[chain.privateKeyEnv];
-    if (!pk) throw new Error(`Missing ${chain.privateKeyEnv}`);
+    const pk = executePrivateKey(chain);
     const provider = new JsonRpcProvider(chain.rpcUrl);
     const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
     const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
     const intent = decodeSwapIntent(invoice.data);
-    const signature = await this.fetchExecuteSignature(invoiceId, plan.adapterId, plan.routeData, plan.minAmountOut);
+    const minAmountOut = invoice.targetAmount;
+    const signature = await this.fetchExecuteSignature(invoiceId, plan.adapterId, plan.routeData, minAmountOut);
     const tx = await contract.execute(
       invoiceId,
       plan.adapterId,
@@ -202,8 +202,7 @@ export class ExecuteRunner {
       console.warn("[execute-node] refund not wired for chain type", chain.id);
       return;
     }
-    const pk = process.env[chain.privateKeyEnv];
-    if (!pk) throw new Error(`Missing ${chain.privateKeyEnv}`);
+    const pk = executePrivateKey(chain);
     const provider = new JsonRpcProvider(chain.rpcUrl);
     const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
     const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
@@ -226,4 +225,10 @@ export class ExecuteRunner {
 
 function planKindSupportsRefund(chain: ExecuteChainConfig): boolean {
   return chain.type === "evm" && Boolean(chain.fastSwapAddress);
+}
+
+function executePrivateKey(chain: ExecuteChainConfig): string {
+  const pk = process.env[chain.privateKeyEnv] ?? process.env.EVM_PRIVATE_KEY;
+  if (!pk) throw new Error(`Missing ${chain.privateKeyEnv} or EVM_PRIVATE_KEY`);
+  return pk;
 }
