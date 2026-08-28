@@ -22,6 +22,7 @@ contract RangoAdapter is AdapterBase {
             _pullToken(ctx.token, ctx.amount);
             _approveRouter(ctx.token, router, ctx.amount);
             _callRouter(router, callData, 0);
+            _resetRouterAllowance(ctx.token, router);
         }
     }
 }

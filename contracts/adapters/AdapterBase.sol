@@ -74,6 +74,11 @@ abstract contract AdapterBase is IAggregatorAdapter {
         if (!ok) revert CallFailed();
     }
 
+    function _resetRouterAllowance(address token, address router) internal {
+        if (token == address(0)) return;
+        IERC20(token).forceApprove(router, 0);
+    }
+
     /// @dev routeData = abi.encode(address router, bytes callData)
     function _decodeRouterCall(bytes calldata routeData) internal pure returns (address router, bytes memory callData) {
         (router, callData) = abi.decode(routeData, (address, bytes));
