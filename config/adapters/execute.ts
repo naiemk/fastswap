@@ -1,5 +1,6 @@
 import type { FastSwapConfigFile } from "../types.js";
 import { resolveApiBaseUrl } from "../../shared/api-base.js";
+import { createAggregatorClientsFromEnv } from "../../aggregators/index.js";
 import type { ExecuteRunnerConfig } from "../../nodes/execute-node/runner.js";
 
 export function toExecuteNodeConfig(config: FastSwapConfigFile): ExecuteRunnerConfig {
@@ -14,6 +15,7 @@ export function toExecuteNodeConfig(config: FastSwapConfigFile): ExecuteRunnerCo
     progressPath: config.nodes?.execute?.progressPath ?? "data/execute-progress.json",
     auditLogPath: config.server.auditLogPath,
     maxDeviationBps: BigInt(config.quote.maxDeviationBps),
+    clients: createAggregatorClientsFromEnv(),
     chains: config["active-chains"]
       .map((key) => config.chains.find((c) => c.key === key))
       .filter((c): c is NonNullable<typeof c> => Boolean(c))

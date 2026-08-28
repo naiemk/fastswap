@@ -32,6 +32,7 @@ describe("FastSwapServer", function () {
         usdPack: 10,
       });
       expect(quote.quoteId).to.be.a("string");
+      expect(quote.selectedProvider).to.equal("mock");
 
       const invoice = await postJson(`${baseUrl}/invoices`, { quoteId: quote.quoteId });
       expect(invoice.invoiceId).to.be.a("string");

@@ -10,7 +10,7 @@ import {
   resolveTronSweepSettings,
 } from "../config/load.js";
 import type { FastSwapChainDefinition, ResolvedFastSwapChain } from "../config/types.js";
-import { createAggregatorClients } from "../aggregators/index.js";
+import { createAggregatorClientsFromEnv } from "../aggregators/index.js";
 import { FastSwapServer, type FastSwapServerOptions, type InvoiceAddressSdk } from "./server.js";
 
 import type { FastSwapConfigFile } from "../config/types.js";
@@ -64,7 +64,7 @@ export function buildFastSwapServerOptions(config: FastSwapConfigFile): FastSwap
     invoiceSdksByChainId,
     chains,
     packs: config.quote.packsUsdMicros.map((usdAmountMicros: string) => ({ usdAmountMicros })),
-    quoteClients: createAggregatorClients({ includeMock: true, rangoApiKey: process.env.RANGO_API_KEY }),
+    quoteClients: createAggregatorClientsFromEnv(),
     nodeAuthSecret: requireSigningSecret(config),
     executePlanSignerPrivateKey: process.env.EXECUTE_PLAN_SIGNER_PRIVATE_KEY,
     feeBps: BigInt(config.quote.feeBps),

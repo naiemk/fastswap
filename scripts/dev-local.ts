@@ -34,6 +34,7 @@ async function main() {
   process.env.EVM_PRIVATE_KEY = PRIVATE_KEY;
   process.env.API_SIGNING_SECRET = process.env.API_SIGNING_SECRET ?? "local-dev-signing-secret-32chars-min";
   process.env.FASTSWAP_CONFIG_PATH = LOCAL_CONFIG;
+  process.env.FASTSWAP_LIVE_PROVIDERS = "0";
 
   await rm(DATA_DIR, { recursive: true, force: true });
   await mkdir(DATA_DIR, { recursive: true });
