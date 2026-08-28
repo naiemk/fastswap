@@ -18,7 +18,7 @@ contract MockAdapter is AdapterBase {
     AdapterContext public lastContext;
     bytes public lastRouteData;
 
-    constructor(address executor_, address sink_) AdapterBase(executor_, keccak256("mock")) {
+    constructor(address executor_, address admin_, address sink_) AdapterBase(executor_, keccak256("mock"), admin_, new address[](0)) {
         sink = sink_;
     }
 

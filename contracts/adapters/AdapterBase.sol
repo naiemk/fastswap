@@ -14,6 +14,7 @@ abstract contract AdapterBase is IAggregatorAdapter {
     using SafeERC20 for IERC20;
 
     address public immutable EXECUTOR;
+    address public immutable ADMIN;
     bytes32 public immutable PROVIDER_ID;
 
     mapping(address router => bool allowed) public routerAllowed;
@@ -25,10 +26,18 @@ abstract contract AdapterBase is IAggregatorAdapter {
     error InvalidPayment();
     error CallFailed();
 
-    constructor(address executor_, bytes32 providerId_) {
-        if (executor_ == address(0)) revert InvalidPayment();
+    constructor(address executor_, bytes32 providerId_, address admin_, address[] memory routers_) {
+        if (executor_ == address(0) || admin_ == address(0)) revert InvalidPayment();
         EXECUTOR = executor_;
+        ADMIN = admin_;
         PROVIDER_ID = providerId_;
+        for (uint256 i; i < routers_.length;) {
+            routerAllowed[routers_[i]] = true;
+            emit RouterAllowedSet(routers_[i], true);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function providerId() external view returns (bytes32) {
@@ -40,7 +49,7 @@ abstract contract AdapterBase is IAggregatorAdapter {
     }
 
     function setRouterAllowed(address router, bool allowed) external {
-        if (msg.sender != EXECUTOR) revert Unauthorized();
+        if (msg.sender != ADMIN) revert Unauthorized();
         routerAllowed[router] = allowed;
         emit RouterAllowedSet(router, allowed);
     }

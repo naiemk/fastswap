@@ -11,7 +11,7 @@ import {AdapterContext} from "../executor/AdapterContext.sol";
  * @dev routeData = abi.encode(address router, bytes callData)
  */
 contract RangoAdapter is AdapterBase {
-    constructor(address executor_) AdapterBase(executor_, keccak256("rango")) {}
+    constructor(address executor_, address admin_) AdapterBase(executor_, keccak256("rango"), admin_, new address[](0)) {}
 
     function execute(AdapterContext calldata ctx, bytes calldata routeData) external payable override onlyExecutor {
         (address router, bytes memory callData) = _decodeRouterCall(routeData);

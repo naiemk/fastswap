@@ -26,7 +26,7 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     const sweeper = await Sweeper.deploy(await fastSwap.getAddress());
 
     const MockAdapter = await ethers.getContractFactory("MockAdapter");
-    const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), await sink.getAddress());
+    const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), owner.address, await sink.getAddress());
     const adapterId = mockAdapterId("mock");
     await fastSwap.setAdapter(adapterId, await mockAdapter.getAddress());
 

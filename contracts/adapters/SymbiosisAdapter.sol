@@ -11,7 +11,7 @@ import {AdapterContext} from "../executor/AdapterContext.sol";
  *      metaRouteCalldata must encode MetaRouteTransaction where field `to` matches ctx.recipient (20 bytes).
  */
 contract SymbiosisAdapter is AdapterBase {
-    constructor(address executor_) AdapterBase(executor_, keccak256("symbiosis")) {}
+    constructor(address executor_, address admin_) AdapterBase(executor_, keccak256("symbiosis"), admin_, new address[](0)) {}
 
     function execute(AdapterContext calldata ctx, bytes calldata routeData) external payable override onlyExecutor {
         (address router, bytes memory callData) = _decodeRouterCall(routeData);

@@ -26,7 +26,7 @@ describe("FastSwap system API (end-to-end)", function () {
     );
     const fastSwap = await ethers.getContractAt("FastSwapReceiver", await proxy.getAddress());
     const MockAdapter = await ethers.getContractFactory("MockAdapter");
-    const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), await sink.getAddress());
+    const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), owner.address, await sink.getAddress());
     const adapterId = keccak256(toUtf8Bytes("mock"));
     await fastSwap.setAdapter(adapterId, await mockAdapter.getAddress());
     const Sweeper = await ethers.getContractFactory("InvoiceSweeper");

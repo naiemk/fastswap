@@ -10,7 +10,7 @@ import {AdapterContext} from "../executor/AdapterContext.sol";
  * @dev routeData = abi.encode(address router, bytes callData)
  */
 contract TransitAdapter is AdapterBase {
-    constructor(address executor_) AdapterBase(executor_, keccak256("transit")) {}
+    constructor(address executor_, address admin_) AdapterBase(executor_, keccak256("transit"), admin_, new address[](0)) {}
 
     function execute(AdapterContext calldata ctx, bytes calldata routeData) external payable override onlyExecutor {
         (address router, bytes memory callData) = _decodeRouterCall(routeData);
