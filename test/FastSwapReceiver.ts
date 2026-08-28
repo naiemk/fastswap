@@ -222,6 +222,34 @@ describe("FastSwapReceiver (aggregator executor)", function () {
     expect(record.status).to.equal(3n);
   });
 
+  it("rejects execute after expiry grace window", async function () {
+    const { ethers, owner, payer, recipient, fastSwap, sweeper, adapterId } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const expiresAt = Math.floor(Date.now() / 1000) + 120;
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+      expiresAt,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await payer.sendTransaction({ to: await sweeper.getInvoiceAddress(invoiceId), value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
+    await ethers.provider.send("evm_increaseTime", [120 + 3601]);
+    await ethers.provider.send("evm_mine", []);
+    const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
+    const signature = await signTestExecutePlan({
+      signer: owner,
+      fastSwap,
+      invoiceId,
+      adapterId,
+      routeData,
+      minAmountOut: 1n,
+    });
+    await expectRevert(fastSwap.execute(invoiceId, adapterId, routeData, signature), "InvalidPayment");
+  });
+
   it("rejects execute when adapter is not registered", async function () {
     const { owner, payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");

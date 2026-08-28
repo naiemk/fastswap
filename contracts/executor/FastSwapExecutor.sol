@@ -181,6 +181,7 @@ abstract contract FastSwapExecutor is AccessControlUpgradeable, EIP712Upgradeabl
         FastSwapStorage storage $ = _getFastSwapStorage();
         InvoiceRecord storage record = $.invoices[invoiceId];
         if (record.status != InvoiceStatus.Paid) revert InvalidState();
+        if (block.timestamp > uint256(record.intent.expiresAt) + 1 hours) revert InvalidPayment();
 
         address adapterAddr = $.adapters[adapterId];
         if (adapterAddr == address(0)) revert InvalidAdapter();
