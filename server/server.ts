@@ -12,15 +12,14 @@ import type {
   FastSwapChainConfig,
   FastSwapInvoice,
   FastSwapInvoiceTrackPatch,
-  FastSwapLiquiditySummary,
   FastSwapPack,
   FastSwapQuoteRequest,
   FastSwapStatus,
 } from "../shared/types.js";
 import { FASTSWAP_CHAINS, FASTSWAP_DEFAULT_FEE_BPS, FASTSWAP_PACKS } from "../shared/defaults.js";
+import { createAggregatorClients } from "../aggregators/index.js";
+import type { IAggregatorClient } from "../aggregators/IAggregatorClient.js";
 import { QuoteEngine } from "./quote-engine.js";
-import type { PriceFetch } from "./price-sources.js";
-import { StaticQuoteSource, type QuoteSource } from "./quote-sources.js";
 import { FastSwapStore } from "./store.js";
 
 /** Minimal invoice address deriver implemented by both OnchainInvoiceSdk and TronInvoiceSdk. */
@@ -34,23 +33,19 @@ export type FastSwapServerOptions = {
   signingSecret?: string;
   invoiceSdk: InvoiceAddressSdk;
   invoiceSdksByChainId?: Record<string, InvoiceAddressSdk>;
-  quoteSources?: QuoteSource[];
+  quoteClients?: IAggregatorClient[];
   chains?: FastSwapChainConfig[];
   packs?: FastSwapPack[];
-  /** Shared secret for node-authenticated endpoints (track, list, liquidity). */
   nodeAuthSecret?: string;
-  /** @deprecated Use nodeAuthSecret */
   nodeApiKey?: string;
   verifyCaptcha?: (token: string | undefined, context: FastSwapCaptchaContext) => Promise<boolean> | boolean;
   requireCaptchaForQuotes?: boolean;
   requireCaptchaForInvoices?: boolean;
   captchaSiteKey?: string;
   resolveInvoiceStatus?: (invoice: FastSwapInvoice) => Promise<FastSwapStatus | undefined> | FastSwapStatus | undefined;
-  resolveLiquidity?: () => Promise<FastSwapLiquiditySummary[]> | FastSwapLiquiditySummary[];
   quoteTtlMs?: number;
-  maxDeviationBps?: bigint;
   feeBps?: bigint;
-  priceFetch?: PriceFetch;
+  defaultSlippageBps?: number;
 };
 
 export type FastSwapCaptchaContext = {
@@ -86,17 +81,11 @@ export class FastSwapServer {
       this.audit = new AuditLog(options.auditLogPath, "api");
     }
     this.quoteEngine = new QuoteEngine({
-      sources: options.quoteSources ?? [
-        new StaticQuoteSource("static-a", {}),
-        new StaticQuoteSource("static-b", {}),
-        new StaticQuoteSource("static-c", {}),
-      ],
+      clients: options.quoteClients ?? createAggregatorClients({ includeMock: true }),
       chains: this.chains,
       feeBps: options.feeBps ?? FASTSWAP_DEFAULT_FEE_BPS,
-      quoteTtlMs: options.quoteTtlMs ?? 5 * 60 * 1000,
-      maxDeviationBps: options.maxDeviationBps ?? 100n,
-      allowedPackUsdMicros: this.packs.map((pack) => pack.usdAmountMicros),
-      priceFetch: options.priceFetch,
+      quoteTtlMs: options.quoteTtlMs ?? 30_000,
+      defaultSlippageBps: options.defaultSlippageBps ?? 100,
     });
   }
 
@@ -129,6 +118,7 @@ export class FastSwapServer {
         return writeJson(response, 200, {
           chains: this.chains,
           packs: this.packs,
+          modes: ["simple", "advanced"],
           captcha: {
             requiredForQuotes: this.options.requireCaptchaForQuotes === true,
             requiredForInvoices: this.options.requireCaptchaForInvoices === true,
@@ -208,7 +198,11 @@ export class FastSwapServer {
         }
         const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), 1_000);
         const cursor = url.searchParams.get("cursor") ?? undefined;
-        const rows = this.store.listInvoices(limit, cursor);
+        const statusFilter = url.searchParams.get("status") ?? undefined;
+        let rows = this.store.listInvoices(limit, cursor);
+        if (statusFilter) {
+          rows = rows.filter((row) => row.invoice.status === statusFilter);
+        }
         const invoices = await Promise.all(rows.map((row) => this.finalizeInvoiceResponse(row.invoice)));
         return writeJson(response, 200, {
           invoices: invoices.map((invoice, index) => ({
@@ -221,6 +215,14 @@ export class FastSwapServer {
           })),
           nextCursor: rows.length === limit ? String(rows[rows.length - 1].updatedAt) : undefined,
         });
+      }
+      if (request.method === "GET" && url.pathname === "/invoices/paid") {
+        if (!this.requireNodeAuth(request)) {
+          throw new HttpError(401, "Invalid node credentials");
+        }
+        const rows = this.store.listInvoices(500).filter((row) => row.invoice.status === "paid");
+        const invoices = await Promise.all(rows.map((row) => this.finalizeInvoiceResponse(row.invoice)));
+        return writeJson(response, 200, invoices);
       }
       if (request.method === "GET" && url.pathname.match(/^\/invoices\/[^/]+$/)) {
         const invoiceId = decodeURIComponent(url.pathname.slice("/invoices/".length));
@@ -258,8 +260,7 @@ export class FastSwapServer {
         if (!this.requireNodeAuth(request)) {
           throw new HttpError(401, "Invalid node credentials");
         }
-        const liquidity = this.options.resolveLiquidity ? await this.options.resolveLiquidity() : [];
-        return writeJson(response, 200, { liquidity });
+        return writeJson(response, 200, { liquidity: [], deprecated: true });
       }
       throw new HttpError(404, "Not found");
     } catch (error) {

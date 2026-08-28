@@ -89,8 +89,6 @@ export function resolveChainContracts(
         fastSwapAddress: sweep.sponsorAddress ?? "",
         sweeperAddress: "",
         forwarderImplementation: "",
-        liquidityManagerImplementation: "",
-        liquidityManagerAddress: sweep.sponsorAddress ?? "",
       };
     }
     const contracts = chain.contracts;
@@ -102,16 +100,16 @@ export function resolveChainContracts(
       fastSwapAddress: contracts.fastSwapAddress,
       sweeperAddress: contracts.sweeperAddress,
       forwarderImplementation: contracts.forwarderImplementation ?? "",
-      liquidityManagerImplementation: "",
-      liquidityManagerAddress: contracts.liquidityManagerAddress ?? "",
     };
   }
 
   const shared = config.deploy.contracts;
-  if (!shared.fastSwapAddress || !shared.sweeperAddress) {
-    throw new Error(`Missing EVM deploy.contracts addresses (chain "${chain.key}")`);
+  const override = chain.contracts ?? {};
+  const merged = { ...shared, ...override };
+  if (!merged.fastSwapAddress || !merged.sweeperAddress) {
+    throw new Error(`Missing EVM contract addresses (chain "${chain.key}")`);
   }
-  return { ...shared };
+  return merged;
 }
 
 export function tryResolveChainContracts(
@@ -187,8 +185,6 @@ export function updateTronContracts(
           sweeperAddress: patch.sweeperAddress ?? chain.contracts?.sweeperAddress ?? "",
           forwarderImplementation:
             patch.forwarderImplementation ?? chain.contracts?.forwarderImplementation ?? "",
-          liquidityManagerAddress:
-            patch.liquidityManagerAddress ?? chain.contracts?.liquidityManagerAddress ?? "",
         },
       };
     }),

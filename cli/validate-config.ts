@@ -83,9 +83,6 @@ export function validateFastSwapConfig(
       if (!contracts.fastSwapAddress || !contracts.sweeperAddress) {
         issues.push(`${chain.key}: missing fastSwap or sweeper address`);
       }
-      if (!contracts.liquidityManagerAddress) {
-        issues.push(`${chain.key}: missing liquidityManagerAddress`);
-      }
     } else if (!isTronEoaChain(chain)) {
       if (!contracts.fastSwapAddress || !contracts.sweeperAddress) {
         issues.push(`${chain.key}: missing fastSwap or sweeper address`);

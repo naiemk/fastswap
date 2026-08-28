@@ -1,0 +1,37 @@
+name: fastswap
+version: 1
+
+templates:
+  api: api-config.yaml
+  ui: ui-config.yaml
+  nodes: nodes-config.yaml
+
+network:
+  edge: fastswap-edge
+
+autoUpdate:
+  api:
+    enabled: false
+    intervalMin: 30
+    offset: 0
+  ui:
+    enabled: false
+    intervalMin: 20
+    offset: 15
+  nodes:
+    enabled: false
+    intervalMin: 30
+    offset: 10
+  gateway:
+    enabled: false
+    intervalMin: 20
+    offset: 20
+
+gateway:
+  nginxImage: nginx:alpine
+  sites:
+    - host: app.example.com
+      aliases:
+        - www.app.example.com
+      healthPath: /health
+      tlsCertDir: /etc/letsencrypt/live/app.example.com

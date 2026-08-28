@@ -23,8 +23,7 @@ describe("FastSwapConfig normalize", function () {
       },
       quote: { feeBps: 75, maxDeviationBps: 100, quoteTtlSec: 900, packsUsd: ["10", "20"] },
       sweepNode: { pollIntervalMs: 1, pageLimit: 1, confirmations: 1, logScanOverlap: 1, sqlitePath: ":memory:" },
-      relayNode: { pollIntervalMs: 1, confirmations: 1 },
-      liquidityMonitor: { pollIntervalMs: 1 },
+      executeNode: { pollIntervalMs: 1 },
       deploy: {
         createx: "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
         owner: "0x0",
@@ -34,26 +33,11 @@ describe("FastSwapConfig normalize", function () {
           fastSwapAddress: "0x2",
           sweeperAddress: "0x3",
           forwarderImplementation: "0x4",
-          liquidityManagerImplementation: "0x5",
-          liquidityManagerAddress: "0x6",
-        },
-      },
-      liquidityManager: {
-        pollIntervalMs: 1,
-        sqlitePath: ":memory:",
-        economics: {
-          gasGateBps: 50,
-          minNotionalUsd: 100,
-          maxStalenessSec: 3600,
-          riskCapUsd: 5000,
-          cooldownSec: 300,
-          slippageBps: 50,
         },
       },
       nodes: {
         sweep: { auditLogPath: "/tmp/s.jsonl" },
-        relay: { progressPath: "/tmp/r.json", auditLogPath: "/tmp/r.jsonl" },
-        liqman: { auditLogPath: "/tmp/l.jsonl" },
+        execute: { progressPath: "/tmp/e.json", auditLogPath: "/tmp/e.jsonl" },
       },
       chains: [
         {
@@ -63,23 +47,12 @@ describe("FastSwapConfig normalize", function () {
           name: "Base",
           explorerUrl: "https://basescan.org",
           tokens: {
-            ETH: { decimals: 18, isNative: true, minLiquidity: "0" },
+            ETH: { decimals: 18, isNative: true },
             USDC: {
               address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
               decimals: 6,
               priceUsd: "1",
             },
-          },
-          liquidity: {
-            reserveStable: "USDC",
-            receivers: [
-              {
-                tokens: {
-                  ETH: { floor: "0.02", target: "0.05", ceiling: "0.12" },
-                  USDC: { isStable: true, floor: "100", target: "300", ceiling: "800" },
-                },
-              },
-            ],
           },
         },
       ],
@@ -87,14 +60,6 @@ describe("FastSwapConfig normalize", function () {
 
     expect(normalized.quote.packsUsdMicros).to.deep.equal(["10000000", "20000000"]);
     expect(normalized.chains[0].tokens.find((t) => t.symbol === "USDC")?.priceUsdMicros).to.equal("1000000");
-
-    const ethBand = normalized.chains[0].liquidity!.receivers[0].tokens.find((t) => t.symbol === "ETH")!;
-    expect(ethBand.floor).to.equal("20000000000000000");
-    expect(ethBand.target).to.equal("50000000000000000");
-
-    const usdcBand = normalized.chains[0].liquidity!.receivers[0].tokens.find((t) => t.symbol === "USDC")!;
-    expect(usdcBand.floor).to.equal("100000000");
-    expect(usdcBand.address).to.equal("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
   });
 
   it("loads FastSwapConfig.yaml with human-readable amounts", function () {
@@ -103,7 +68,7 @@ describe("FastSwapConfig normalize", function () {
     expect(config.deploy.resolvedSalts?.fastSwapImplementation).to.match(/^0x[0-9a-f]{64}$/);
 
     const base = config.chains.find((c) => c.key === "base")!;
-    const ethBand = base.liquidity!.receivers[0].tokens.find((t) => t.symbol === "ETH")!;
-    expect(ethBand.floor).to.equal("20000000000000000");
+    const eth = base.tokens.find((t) => t.symbol === "ETH")!;
+    expect(eth.isNative).to.equal(true);
   });
 });

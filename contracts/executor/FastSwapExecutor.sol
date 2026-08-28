@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {IAggregatorAdapter} from "./IAggregatorAdapter.sol";
+import {AdapterContext} from "./AdapterContext.sol";
+
+/**
+ * @title FastSwapExecutor
+ * @notice Invoice state machine for aggregator-of-aggregators swaps.
+ *         Users pay via onchain-invoice forwarders; relayer calls `execute` on source chain.
+ *         No inventory, no dest-chain payout — aggregators deliver cross-chain.
+ */
+abstract contract FastSwapExecutor is AccessControlUpgradeable, PausableUpgradeable {
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
+    uint8 public constant INTENT_VERSION = 2;
+
+    enum InvoiceStatus {
+        None,
+        Paid,
+        Executed,
+        Refunded
+    }
+
+    struct SwapIntent {
+        uint8 version;
+        bytes32 quoteId;
+        uint256 sourceChainId;
+        bytes sourceToken;
+        uint256 minSourceAmount;
+        uint256 destChainId;
+        bytes destToken;
+        uint256 minAmountOut;
+        bytes recipient;
+        bytes refundTo;
+        uint64 expiresAt;
+        uint16 slippageBps;
+    }
+
+    struct InvoiceRecord {
+        SwapIntent intent;
+        InvoiceStatus status;
+        address paidToken;
+        uint256 paidAmount;
+        bytes32 executedAdapterId;
+    }
+
+    /// @custom:storage-location erc7201:fastswap.storage.FastSwapExecutor
+    struct FastSwapStorage {
+        mapping(bytes32 invoiceId => InvoiceRecord record) invoices;
+        mapping(bytes32 adapterId => address adapter) adapters;
+        uint16 feeBps;
+        uint256 reentrancyStatus;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("fastswap.storage.FastSwapExecutor")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant FASTSWAP_STORAGE_LOCATION =
+        0xc202e599bf00194ddf9a023608d5682d137afb9d4cebab16a72746b2881aff01;
+
+    event InvoicePaid(
+        bytes32 indexed invoiceId,
+        bytes32 indexed quoteId,
+        address indexed token,
+        uint256 amount,
+        uint256 destChainId
+    );
+    event SwapExecuted(
+        bytes32 indexed invoiceId,
+        bytes32 indexed adapterId,
+        address indexed token,
+        uint256 amountIn,
+        uint256 minAmountOut
+    );
+    event InvoiceRefunded(bytes32 indexed invoiceId, address indexed token, address indexed to, uint256 amount);
+    event AdapterSet(bytes32 indexed adapterId, address indexed adapter);
+    event FeeBpsSet(uint16 feeBps);
+
+    error InvalidIntent();
+    error InvalidPayment();
+    error InvalidRecipient();
+    error InvalidAdapter();
+    error InvalidState();
+    error ReentrantCall();
+
+    modifier nonReentrant() {
+        FastSwapStorage storage $ = _getFastSwapStorage();
+        if ($.reentrancyStatus == _ENTERED) revert ReentrantCall();
+        $.reentrancyStatus = _ENTERED;
+        _;
+        $.reentrancyStatus = _NOT_ENTERED;
+    }
+
+    // --- chain-specific token primitives ---
+
+    function _transferToken(address token, address to, uint256 amount) internal virtual;
+    function _approveToken(address token, address spender, uint256 amount) internal virtual;
+
+    function __FastSwapExecutor_init(address owner, uint16 feeBps_) internal onlyInitializing {
+        __AccessControl_init();
+        __Pausable_init();
+        FastSwapStorage storage $ = _getFastSwapStorage();
+        $.reentrancyStatus = _NOT_ENTERED;
+        $.feeBps = feeBps_;
+        _grantRole(DEFAULT_ADMIN_ROLE, owner);
+        _grantRole(ADMIN_ROLE, owner);
+        _grantRole(RELAYER_ROLE, owner);
+    }
+
+    // --- views ---
+
+    function invoiceRecord(bytes32 invoiceId) external view returns (InvoiceRecord memory) {
+        return _getFastSwapStorage().invoices[invoiceId];
+    }
+
+    function adapter(bytes32 adapterId) external view returns (address) {
+        return _getFastSwapStorage().adapters[adapterId];
+    }
+
+    function feeBps() external view returns (uint16) {
+        return _getFastSwapStorage().feeBps;
+    }
+
+    // --- admin ---
+
+    function setAdapter(bytes32 adapterId, address adapterAddr) external onlyRole(ADMIN_ROLE) {
+        _getFastSwapStorage().adapters[adapterId] = adapterAddr;
+        emit AdapterSet(adapterId, adapterAddr);
+    }
+
+    function setFeeBps(uint16 feeBps_) external onlyRole(ADMIN_ROLE) {
+        _getFastSwapStorage().feeBps = feeBps_;
+        emit FeeBpsSet(feeBps_);
+    }
+
+    function pause() external onlyRole(ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(ADMIN_ROLE) {
+        _unpause();
+    }
+
+    // --- relayer ---
+
+    function execute(
+        bytes32 invoiceId,
+        bytes32 adapterId,
+        bytes calldata routeData,
+        uint256 minAmountOut
+    ) external onlyRole(RELAYER_ROLE) whenNotPaused nonReentrant {
+        FastSwapStorage storage $ = _getFastSwapStorage();
+        InvoiceRecord storage record = $.invoices[invoiceId];
+        if (record.status != InvoiceStatus.Paid) revert InvalidState();
+
+        address adapterAddr = $.adapters[adapterId];
+        if (adapterAddr == address(0)) revert InvalidAdapter();
+
+        uint256 fee = (record.paidAmount * $.feeBps) / 10_000;
+        uint256 routeAmount = record.paidAmount - fee;
+        if (routeAmount == 0) revert InvalidPayment();
+
+        address token = record.paidToken;
+        uint256 floor = minAmountOut > 0 ? minAmountOut : record.intent.minAmountOut;
+
+        AdapterContext memory ctx = AdapterContext({
+            invoiceId: invoiceId,
+            token: token,
+            amount: routeAmount,
+            destChainId: record.intent.destChainId,
+            destToken: record.intent.destToken,
+            recipient: record.intent.recipient,
+            minAmountOut: floor,
+            refundTo: _decodeRefundAddress(record.intent.refundTo)
+        });
+
+        if (token == address(0)) {
+            IAggregatorAdapter(adapterAddr).execute{value: routeAmount}(ctx, routeData);
+        } else {
+            _approveToken(token, adapterAddr, routeAmount);
+            IAggregatorAdapter(adapterAddr).execute(ctx, routeData);
+            _approveToken(token, adapterAddr, 0);
+        }
+
+        record.status = InvoiceStatus.Executed;
+        record.executedAdapterId = adapterId;
+        emit SwapExecuted(invoiceId, adapterId, token, routeAmount, floor);
+    }
+
+    function refund(bytes32 invoiceId) external onlyRole(RELAYER_ROLE) whenNotPaused nonReentrant {
+        FastSwapStorage storage $ = _getFastSwapStorage();
+        InvoiceRecord storage record = $.invoices[invoiceId];
+        if (record.status != InvoiceStatus.Paid) revert InvalidState();
+
+        address to = _decodeRefundAddress(record.intent.refundTo);
+        if (to == address(0)) revert InvalidRecipient();
+
+        uint256 amount = record.paidAmount;
+        address token = record.paidToken;
+        record.status = InvoiceStatus.Refunded;
+        record.paidAmount = 0;
+
+        _transferOut(token, to, amount);
+        emit InvoiceRefunded(invoiceId, token, to, amount);
+    }
+
+    // --- invoice hook ---
+
+    function _executeFastSwapInvoice(
+        bytes32 invoiceId,
+        address token,
+        uint256 amount,
+        bytes calldata data
+    ) internal whenNotPaused returns (bytes memory) {
+        SwapIntent memory intent = _decodeIntent(data);
+        if (invoiceId != keccak256(data)) revert InvalidIntent();
+        if (!_tokenMatches(intent.sourceToken, token)) revert InvalidPayment();
+        if (amount < intent.minSourceAmount) revert InvalidPayment();
+        if (block.timestamp > intent.expiresAt) revert InvalidPayment();
+
+        FastSwapStorage storage $ = _getFastSwapStorage();
+        InvoiceRecord storage record = $.invoices[invoiceId];
+        if (record.status != InvoiceStatus.None) revert InvalidState();
+
+        record.intent = intent;
+        record.status = InvoiceStatus.Paid;
+        record.paidToken = token;
+        record.paidAmount = amount;
+
+        emit InvoicePaid(invoiceId, intent.quoteId, token, amount, intent.destChainId);
+        return "";
+    }
+
+    // --- internal ---
+
+    function _decodeIntent(bytes calldata data) private pure returns (SwapIntent memory intent) {
+        intent = abi.decode(data, (SwapIntent));
+        if (intent.version != INTENT_VERSION || intent.expiresAt == 0 || intent.recipient.length == 0) {
+            revert InvalidIntent();
+        }
+    }
+
+    function _tokenMatches(bytes memory intentToken, address token) private pure returns (bool) {
+        if (token == address(0)) {
+            return intentToken.length == 0;
+        }
+        if (intentToken.length != 20) return false;
+        address decoded;
+        assembly {
+            decoded := shr(96, mload(add(intentToken, 32)))
+        }
+        return decoded == token;
+    }
+
+    function _decodeRefundAddress(bytes memory refundTo) private pure returns (address) {
+        if (refundTo.length == 0) return address(0);
+        if (refundTo.length != 20) revert InvalidRecipient();
+        address decoded;
+        assembly {
+            decoded := shr(96, mload(add(refundTo, 32)))
+        }
+        return decoded;
+    }
+
+    function _transferOut(address token, address to, uint256 amount) private {
+        if (token == address(0)) {
+            (bool ok,) = to.call{value: amount}("");
+            if (!ok) revert InvalidPayment();
+        } else {
+            _transferToken(token, to, amount);
+        }
+    }
+
+    function _getFastSwapStorage() private pure returns (FastSwapStorage storage $) {
+        assembly {
+            $.slot := FASTSWAP_STORAGE_LOCATION
+        }
+    }
+
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        virtual
+        override(AccessControlUpgradeable)
+        returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
+    }
+}

@@ -30,10 +30,6 @@ export type CreateXInit = {
   initCode: string;
 };
 
-/**
- * CreateX `deployCreate2` guards arbitrary salts before CREATE2 (see CreateX `_guard`).
- * `computeCreate2Address` expects the guarded salt, not the raw input salt.
- */
 export function guardCreateXSalt(rawSalt: string): string {
   return keccak256(AbiCoder.defaultAbiCoder().encode(["bytes32"], [normalizeSalt(rawSalt)]));
 }
@@ -132,15 +128,12 @@ export async function predictStackAddresses(input: {
     fastSwap: { abi: unknown; bytecode: string };
     proxy: { abi: unknown; bytecode: string };
     sweeper: { abi: unknown; bytecode: string };
-    liquidityManager: { abi: unknown; bytecode: string };
   };
 }): Promise<{
   fastSwapImplementation: string;
   fastSwapAddress: string;
   sweeperAddress: string;
   forwarderImplementation: string;
-  liquidityManagerImplementation: string;
-  liquidityManagerAddress: string;
 }> {
   const owner = getAddress(input.owner);
   const fastSwapFactory = new ContractFactory(input.artifacts.fastSwap.abi as never, input.artifacts.fastSwap.bytecode);
@@ -159,33 +152,11 @@ export async function predictStackAddresses(input: {
   const sweeperInit = await buildInitCode(input.artifacts.sweeper, [fastSwapAddress]);
   const sweeperAddress = predictCreateXAddress(input.createx, input.salts.invoiceSweeper, sweeperInit);
 
-  const lmFactory = new ContractFactory(
-    input.artifacts.liquidityManager.abi as never,
-    input.artifacts.liquidityManager.bytecode
-  );
-  const lmInitData = lmFactory.interface.encodeFunctionData("initialize", [owner]);
-
-  const lmImplementationInit = await buildInitCode(input.artifacts.liquidityManager);
-  const liquidityManagerImplementation = predictCreateXAddress(
-    input.createx,
-    input.salts.liquidityManagerImplementation,
-    lmImplementationInit
-  );
-
-  const lmProxyInit = await buildInitCode(input.artifacts.proxy, [liquidityManagerImplementation, lmInitData]);
-  const liquidityManagerAddress = predictCreateXAddress(
-    input.createx,
-    input.salts.liquidityManagerProxy,
-    lmProxyInit
-  );
-
   return {
     fastSwapImplementation,
     fastSwapAddress,
     sweeperAddress,
     forwarderImplementation: "",
-    liquidityManagerImplementation,
-    liquidityManagerAddress,
   };
 }
 
@@ -194,8 +165,6 @@ export type DeployProgressPatch = Partial<{
   fastSwapAddress: string;
   sweeperAddress: string;
   forwarderImplementation: string;
-  liquidityManagerImplementation: string;
-  liquidityManagerAddress: string;
 }>;
 
 export async function deployEvmStackViaCreateX(input: {
@@ -207,17 +176,13 @@ export async function deployEvmStackViaCreateX(input: {
     fastSwap: { abi: unknown; bytecode: string };
     proxy: { abi: unknown; bytecode: string };
     sweeper: { abi: unknown; bytecode: string };
-    liquidityManager: { abi: unknown; bytecode: string };
   };
-  includeLiquidityManager?: boolean;
   onProgress?: (patch: DeployProgressPatch) => void | Promise<void>;
 }): Promise<{
   fastSwapImplementation: string;
   fastSwapAddress: string;
   sweeperAddress: string;
   forwarderImplementation: string;
-  liquidityManagerImplementation: string;
-  liquidityManagerAddress: string;
 }> {
   const owner = getAddress(input.owner);
   const createx = getAddress(input.createx);
@@ -227,12 +192,7 @@ export async function deployEvmStackViaCreateX(input: {
   await assertCreateXDeployed(provider, createx);
 
   const fastSwapFactory = new ContractFactory(input.artifacts.fastSwap.abi as never, input.artifacts.fastSwap.bytecode);
-  const lmFactory = new ContractFactory(
-    input.artifacts.liquidityManager.abi as never,
-    input.artifacts.liquidityManager.bytecode
-  );
   const initData = fastSwapFactory.interface.encodeFunctionData("initialize", [owner]);
-  const lmInitData = lmFactory.interface.encodeFunctionData("initialize", [owner]);
 
   const fastSwapImplementationInit = await buildInitCode(input.artifacts.fastSwap);
   const fastSwapImplementation = await deployViaCreateX(
@@ -254,48 +214,11 @@ export async function deployEvmStackViaCreateX(input: {
   const forwarderImplementation = String(await sweeperRead.getFunction("forwarderImplementation")());
   await input.onProgress?.({ fastSwapImplementation, fastSwapAddress, sweeperAddress, forwarderImplementation });
 
-  let liquidityManagerImplementation = "";
-  let liquidityManagerAddress = "";
-  if (input.includeLiquidityManager !== false) {
-    const lmImplementationInit = await buildInitCode(input.artifacts.liquidityManager);
-    liquidityManagerImplementation = await deployViaCreateX(
-      input.signer,
-      createx,
-      input.salts.liquidityManagerImplementation,
-      lmImplementationInit
-    );
-    await input.onProgress?.({
-      fastSwapImplementation,
-      fastSwapAddress,
-      sweeperAddress,
-      forwarderImplementation,
-      liquidityManagerImplementation,
-    });
-
-    const lmProxyInit = await buildInitCode(input.artifacts.proxy, [liquidityManagerImplementation, lmInitData]);
-    liquidityManagerAddress = await deployViaCreateX(
-      input.signer,
-      createx,
-      input.salts.liquidityManagerProxy,
-      lmProxyInit
-    );
-    await input.onProgress?.({
-      fastSwapImplementation,
-      fastSwapAddress,
-      sweeperAddress,
-      forwarderImplementation,
-      liquidityManagerImplementation,
-      liquidityManagerAddress,
-    });
-  }
-
   return {
     fastSwapImplementation,
     fastSwapAddress,
     sweeperAddress,
     forwarderImplementation,
-    liquidityManagerImplementation,
-    liquidityManagerAddress,
   };
 }
 

@@ -1,13 +1,13 @@
 import { expect } from "chai";
 import { network } from "hardhat";
-import { ethers as ethersLib } from "ethers";
+import { ethers as ethersLib, keccak256, toUtf8Bytes } from "ethers";
 
-describe("FastSwapReceiver", function () {
+describe("FastSwapReceiver (aggregator executor)", function () {
   async function deployFixture() {
     const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & {
       ethers: any;
     };
-    const [owner, payer, recipient, aggregator] = await ethers.getSigners();
+    const [owner, payer, recipient, sink] = await ethers.getSigners();
 
     const FastSwap = await ethers.getContractFactory("FastSwapReceiver");
     const implementation = await FastSwap.deploy();
@@ -24,17 +24,22 @@ describe("FastSwapReceiver", function () {
     const Sweeper = await ethers.getContractFactory("InvoiceSweeper");
     const sweeper = await Sweeper.deploy(await fastSwap.getAddress());
 
-    return { ethers, owner, payer, recipient, aggregator, fastSwap, token, sweeper };
+    const MockAdapter = await ethers.getContractFactory("MockAdapter");
+    const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), await sink.getAddress());
+    const adapterId = keccak256(toUtf8Bytes("mock"));
+    await fastSwap.setAdapter(adapterId, await mockAdapter.getAddress());
+
+    return { ethers, owner, payer, recipient, sink, fastSwap, token, sweeper, mockAdapter, adapterId };
   }
 
-  it("records a source-chain swap request through invoice sweep", async function () {
+  it("records invoice payment through sweep", async function () {
     const { payer, recipient, fastSwap, sweeper } = await deployFixture();
     const sourceAmount = ethersLib.parseEther("1");
-    const targetAmount = ethersLib.parseEther("0.95");
-    const data = encodeIntent({
-      sourceAmount,
-      targetAmount,
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: ethersLib.parseEther("0.95"),
       recipient: recipient.address,
+      refundTo: recipient.address,
     });
     const invoiceId = ethersLib.keccak256(data);
     const invoiceAddress = await sweeper.getInvoiceAddress(invoiceId);
@@ -42,96 +47,76 @@ describe("FastSwapReceiver", function () {
     await payer.sendTransaction({ to: invoiceAddress, value: sourceAmount });
     await sweeper.sweepEth(invoiceId, data);
 
-    const state = await fastSwap.swapState(invoiceId);
-    expect(state.requested).to.equal(true);
-    expect(state.paidAmount).to.equal(sourceAmount);
-    expect(state.intent.targetAmount).to.equal(targetAmount);
+    const record = await fastSwap.invoiceRecord(invoiceId);
+    expect(record.status).to.equal(1n);
+    expect(record.paidAmount).to.equal(sourceAmount);
   });
 
-  it("relays and processes immediately when target liquidity exists", async function () {
-    const { ethers, recipient, fastSwap } = await deployFixture();
-    const targetAmount = 1000n;
-    const data = encodeIntent({ targetAmount, recipient: recipient.address });
-    const swapId = ethersLib.keccak256(data);
+  it("executes via mock adapter after payment", async function () {
+    const { payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    const invoiceAddress = await sweeper.getInvoiceAddress(invoiceId);
 
-    await fastSwap.addLiquidity(ethersLib.ZeroAddress, targetAmount, { value: targetAmount });
-    await fastSwap.relaySwap(data);
+    await payer.sendTransaction({ to: invoiceAddress, value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
 
-    const state = await fastSwap.swapState(swapId);
-    expect(state.relayed).to.equal(true);
-    expect(state.processed).to.equal(true);
-    expect(await ethers.provider.getBalance(await fastSwap.getAddress())).to.equal(0n);
+    const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
+    await fastSwap.execute(invoiceId, adapterId, routeData, 1n);
+
+    const record = await fastSwap.invoiceRecord(invoiceId);
+    expect(record.status).to.equal(2n);
+    expect(await sink.provider.getBalance(await sink.getAddress())).to.be.gt(0n);
   });
 
-  it("queues relayed swaps when liquidity is missing and processes later", async function () {
-    const { recipient, fastSwap } = await deployFixture();
-    const targetAmount = 1000n;
-    const data = encodeIntent({ targetAmount, recipient: recipient.address });
-    const swapId = ethersLib.keccak256(data);
+  it("refunds paid invoice to refund address", async function () {
+    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    const invoiceAddress = await sweeper.getInvoiceAddress(invoiceId);
 
-    await fastSwap.relaySwap(data);
-    let state = await fastSwap.swapState(swapId);
-    expect(state.queued).to.equal(true);
-    expect(await fastSwap.queuedSwapCount()).to.equal(1n);
-
-    await fastSwap.addLiquidity(ethersLib.ZeroAddress, targetAmount, { value: targetAmount });
-    await fastSwap.processQueued(swapId);
-
-    state = await fastSwap.swapState(swapId);
-    expect(state.processed).to.equal(true);
-    expect(state.queued).to.equal(false);
-  });
-
-  it("supports admin pause and sweep respecting liquidity floors", async function () {
-    const { recipient, fastSwap } = await deployFixture();
-
-    await fastSwap.addLiquidity(ethersLib.ZeroAddress, 1000n, { value: 1000n });
-    await fastSwap.setLiquidityFloor(ethersLib.ZeroAddress, 600n);
-    await expectRevert(fastSwap.adminSweep(ethersLib.ZeroAddress, recipient.address, 500n), "ReservedLiquidity");
-    await fastSwap.adminSweep(ethersLib.ZeroAddress, recipient.address, 400n);
-
-    await fastSwap.pause();
-    const data = encodeIntent({ targetAmount: 1n, recipient: recipient.address });
-    await expectRevert(fastSwap.relaySwap(data), "EnforcedPause");
-    await fastSwap.unpause();
-  });
-
-  it("lets the rebalancer role withdraw only excess above the floor", async function () {
-    const { owner, payer, recipient, fastSwap } = await deployFixture();
-
-    await fastSwap.addLiquidity(ethersLib.ZeroAddress, 1000n, { value: 1000n });
-    await fastSwap.setLiquidityFloor(ethersLib.ZeroAddress, 600n);
-
-    const rebalancerRole = await fastSwap.REBALANCER_ROLE();
-    expect(await fastSwap.hasRole(rebalancerRole, owner.address)).to.equal(true);
-
-    await expectRevert(
-      fastSwap.withdrawExcess(ethersLib.ZeroAddress, recipient.address, 500n),
-      "ReservedLiquidity"
-    );
+    await payer.sendTransaction({ to: invoiceAddress, value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
 
     const before = await recipient.provider.getBalance(recipient.address);
-    await fastSwap.withdrawExcess(ethersLib.ZeroAddress, recipient.address, 400n);
+    await fastSwap.refund(invoiceId);
     const after = await recipient.provider.getBalance(recipient.address);
-    expect(after - before).to.equal(400n);
+    expect(after - before).to.equal(sourceAmount);
 
-    await expectRevert(
-      fastSwap.connect(payer).withdrawExcess(ethersLib.ZeroAddress, recipient.address, 1n),
-      "AccessControlUnauthorizedAccount"
-    );
+    const record = await fastSwap.invoiceRecord(invoiceId);
+    expect(record.status).to.equal(3n);
   });
 
-  it("allows aggregate role to execute an aggregator call with excess funds", async function () {
-    const { aggregator, fastSwap } = await deployFixture();
-    await fastSwap.addLiquidity(ethersLib.ZeroAddress, 1000n, { value: 1000n });
-    await fastSwap.setLiquidityFloor(ethersLib.ZeroAddress, 400n);
-    await fastSwap.setAggregatorAllowed(aggregator.address, true);
+  it("rejects execute when adapter is not registered", async function () {
+    const { payer, recipient, fastSwap, sweeper } = await deployFixture();
+    const sourceAmount = ethersLib.parseEther("1");
+    const data = encodeIntentV2({
+      minSourceAmount: sourceAmount,
+      minAmountOut: 1n,
+      recipient: recipient.address,
+      refundTo: recipient.address,
+    });
+    const invoiceId = ethersLib.keccak256(data);
+    await payer.sendTransaction({ to: await sweeper.getInvoiceAddress(invoiceId), value: sourceAmount });
+    await sweeper.sweepEth(invoiceId, data);
 
-    const before = await aggregator.provider.getBalance(aggregator.address);
-    await fastSwap.aggregateAll(ethersLib.ZeroAddress, aggregator.address, "0x");
-    const after = await aggregator.provider.getBalance(aggregator.address);
-
-    expect(after - before).to.equal(600n);
+    const badAdapter = keccak256(toUtf8Bytes("missing"));
+    await expectRevert(
+      fastSwap.execute(invoiceId, badAdapter, "0x", 1n),
+      "InvalidAdapter"
+    );
   });
 });
 
@@ -145,28 +130,32 @@ async function expectRevert(promise: Promise<unknown>, reason: string) {
   throw new Error("Expected transaction to revert");
 }
 
-function encodeIntent(overrides: {
-  sourceAmount?: bigint;
-  targetAmount?: bigint;
+function encodeIntentV2(overrides: {
+  minSourceAmount?: bigint;
+  minAmountOut?: bigint;
   recipient: string;
+  refundTo: string;
 }) {
+  const recipientBytes = ethersLib.zeroPadValue(overrides.recipient, 20);
+  const refundBytes = ethersLib.zeroPadValue(overrides.refundTo, 20);
   return ethersLib.AbiCoder.defaultAbiCoder().encode(
     [
-      "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,address sourceToken,uint256 sourceAmount,uint256 targetChainId,address targetToken,uint256 targetAmount,address recipient,uint64 expiresAt,address refundAddress)",
+      "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,bytes sourceToken,uint256 minSourceAmount,uint256 destChainId,bytes destToken,uint256 minAmountOut,bytes recipient,bytes refundTo,uint64 expiresAt,uint16 slippageBps)",
     ],
     [
       {
-        version: 1,
+        version: 2,
         quoteId: ethersLib.id("quote"),
         sourceChainId: 1,
-        sourceToken: ethersLib.ZeroAddress,
-        sourceAmount: overrides.sourceAmount ?? 1n,
-        targetChainId: 2,
-        targetToken: ethersLib.ZeroAddress,
-        targetAmount: overrides.targetAmount ?? 1n,
-        recipient: overrides.recipient,
+        sourceToken: "0x",
+        minSourceAmount: overrides.minSourceAmount ?? 1n,
+        destChainId: 2,
+        destToken: "0x",
+        minAmountOut: overrides.minAmountOut ?? 1n,
+        recipient: recipientBytes,
+        refundTo: refundBytes,
         expiresAt: Math.floor(Date.now() / 1000) + 3600,
-        refundAddress: overrides.recipient,
+        slippageBps: 100,
       },
     ]
   );

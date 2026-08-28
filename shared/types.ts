@@ -1,4 +1,6 @@
-export type FastSwapChainType = "evm" | "tron";
+export type FastSwapChainType = "evm" | "tron" | "solana";
+
+export type AggregatorId = "rango" | "rubic" | "symbiosis" | "transit" | "mock";
 
 export type FastSwapTokenConfig = {
   symbol: string;
@@ -6,34 +8,18 @@ export type FastSwapTokenConfig = {
   address?: string;
   decimals: number;
   isNative?: boolean;
-  /** Raw integer micro-USD price, e.g. "$2,000" = "2000000000". UI applies decimal display only. */
+  /** Curated list tier: simple mode shows gas + stables only. */
+  tier?: "simple" | "advanced";
   priceUsdMicros?: string;
   priceSources?: FastSwapTokenPriceSourceConfig[];
-  minLiquidity?: string;
   explorerUrl?: string;
 };
 
 export type FastSwapTokenPriceSourceConfig =
-  | {
-      type: "coingecko";
-      coinId?: string;
-      platformId?: string;
-      contractAddress?: string;
-    }
-  | {
-      type: "binance";
-      symbol: string;
-    }
-  | {
-      type: "dexscreener";
-      chainId: string;
-      tokenAddress?: string;
-      pairAddress?: string;
-    }
-  | {
-      type: "static";
-      priceUsdMicros: string;
-    };
+  | { type: "coingecko"; coinId?: string; platformId?: string; contractAddress?: string }
+  | { type: "binance"; symbol: string }
+  | { type: "dexscreener"; chainId: string; tokenAddress?: string; pairAddress?: string }
+  | { type: "static"; priceUsdMicros: string };
 
 export type FastSwapChainConfig = {
   id: string;
@@ -44,10 +30,13 @@ export type FastSwapChainConfig = {
   fastSwapAddress: string;
   explorerUrl: string;
   tokens: FastSwapTokenConfig[];
+  /** Solana commerce-invoice program id when type=solana. */
+  solanaProgramId?: string;
+  /** FastSwap relayer/merchant pubkey for Solana settle. */
+  solanaMerchant?: string;
 };
 
 export type FastSwapPack = {
-  /** Raw integer micro-USD notional. "$20" = "20000000". */
   usdAmountMicros: string;
 };
 
@@ -57,17 +46,24 @@ export type FastSwapQuoteRequest = {
   targetChainId: string;
   targetToken: string;
   recipient: string;
-  /** Raw integer micro-USD notional. Preferred over legacy usdPack. */
+  /** Raw token amount in smallest units (preferred). */
+  sourceAmount?: string;
+  /** Estimated dest amount from client (optional). */
+  targetAmount?: string;
   usdAmountMicros?: string;
-  /** Legacy whole-dollar pack value kept for old clients/tests. */
   usdPack?: number;
   refundAddress?: string;
+  slippageBps?: number;
+  preferredProvider?: AggregatorId;
+  /** UI mode hint — simple restricts token list server-side. */
+  mode?: "simple" | "advanced";
 };
 
-export type QuoteSourceResult = {
-  source: string;
-  rate: string;
-  targetAmount: string;
+export type AggregatorQuoteResult = {
+  provider: AggregatorId;
+  destAmountOut: string;
+  sourceAmountIn: string;
+  estimatedDurationSec?: number;
   updatedAt: number;
 };
 
@@ -79,23 +75,30 @@ export type FastSwapQuote = {
   sourceAmount: string;
   targetChainId: string;
   targetToken: string;
+  /** Estimated receive (indicative, re-quoted at execute). */
   targetAmount: string;
   recipient: string;
+  refundAddress?: string;
   feeAmount: string;
-  rate: string;
-  sources: QuoteSourceResult[];
+  slippageBps: number;
+  /** Best provider selected for execution unless user pinned one. */
+  selectedProvider: AggregatorId;
+  sources: AggregatorQuoteResult[];
 };
 
 export type FastSwapStatus =
   | "quoted"
   | "waiting_payment"
   | "paid"
-  | "relaying"
-  | "queued"
+  | "executing"
+  | "bridging"
   | "complete"
-  | "failed";
+  | "failed"
+  | "refunded"
+  /** @deprecated inventory-era states */
+  | "relaying"
+  | "queued";
 
-/** On-chain transfer (sweep, relay, payout, or user payment). */
 export type FastSwapChainTx = {
   chainId: string;
   txHash: string;
@@ -105,11 +108,8 @@ export type FastSwapChainTx = {
   explorerTxUrl?: string;
 };
 
-/** Sweep metadata: optional payer payment tx, sweeper tx, forwarder context. */
 export type FastSwapSweepInfo = {
-  /** Sweeper transaction that pulls funds from the invoice contract. */
   tx?: FastSwapChainTx;
-  /** Original payer → forwarder payment, when known from indexer. */
   sourcePayment?: FastSwapChainTx;
   forwarder?: string;
   paymentToken?: string;
@@ -118,12 +118,37 @@ export type FastSwapSweepInfo = {
   error?: string;
 };
 
+export type FastSwapExecuteInfo = {
+  status?: "pending" | "submitted" | "confirmed" | "failed";
+  provider?: AggregatorId;
+  tx?: FastSwapChainTx;
+  routeStatus?: string;
+  error?: string;
+};
+
+/** @deprecated Legacy dest-chain relay telemetry. */
 export type FastSwapRelayInfo = {
   status?: "pending" | "submitted" | "confirmed" | "failed";
-  /** Source-chain tx where `SwapRequested` was emitted (cross-chain swap intent). */
   swapRequestedTx?: FastSwapChainTx;
   tx?: FastSwapChainTx;
   error?: string;
+};
+
+/** @deprecated Legacy price-feed quote row. */
+export type QuoteSourceResult = {
+  source: string;
+  rate: string;
+  targetAmount: string;
+  updatedAt: number;
+};
+
+export type FastSwapLiquiditySummary = {
+  chainId: string;
+  token: string;
+  balance: string;
+  reserved: string;
+  queuedAmount: string;
+  lowLiquidity: boolean;
 };
 
 export type FastSwapPayoutInfo = {
@@ -143,17 +168,19 @@ export type FastSwapInvoice = FastSwapQuote & {
   token?: string;
   amount: string;
   status: FastSwapStatus;
-  /** HMAC-SHA256 hex over canonical invoice fields; nodes verify before acting. */
   signature?: string;
   sweep?: FastSwapSweepInfo;
+  execute?: FastSwapExecuteInfo;
+  /** @deprecated */
   relay?: FastSwapRelayInfo;
   payout?: FastSwapPayoutInfo;
 };
 
-/** Allowed fields for `POST /invoices/:id/track` (node-authenticated merge). */
 export type FastSwapInvoiceTrackPatch = {
   status?: FastSwapStatus;
   sweep?: Partial<FastSwapSweepInfo> & { tx?: Partial<FastSwapChainTx>; sourcePayment?: Partial<FastSwapChainTx> };
+  execute?: Partial<FastSwapExecuteInfo> & { tx?: Partial<FastSwapChainTx> };
+  /** @deprecated */
   relay?: Partial<FastSwapRelayInfo> & { tx?: Partial<FastSwapChainTx>; swapRequestedTx?: Partial<FastSwapChainTx> };
   payout?: Partial<FastSwapPayoutInfo> & { tx?: Partial<FastSwapChainTx> };
 };
@@ -171,13 +198,4 @@ export type FastSwapRecentSwap = {
   txHash?: string;
   explorerTxUrl?: string;
   completedAt?: number;
-};
-
-export type FastSwapLiquiditySummary = {
-  chainId: string;
-  token: string;
-  balance: string;
-  reserved: string;
-  queuedAmount: string;
-  lowLiquidity: boolean;
 };

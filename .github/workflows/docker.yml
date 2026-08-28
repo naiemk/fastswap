@@ -1,0 +1,33 @@
+name: Docker images
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  api:
+    uses: naiemk/vibed-infra/.github/workflows/docker-build-reusable.yml@main
+    with:
+      dockerfile: app/api/Dockerfile
+      image: ghcr.io/${{ github.repository_owner }}/fastswap-api
+    secrets: inherit
+
+  ui:
+    uses: naiemk/vibed-infra/.github/workflows/docker-build-reusable.yml@main
+    with:
+      dockerfile: app/ui/Dockerfile
+      image: ghcr.io/${{ github.repository_owner }}/fastswap-ui
+    secrets: inherit
+
+  nodes:
+    uses: naiemk/vibed-infra/.github/workflows/docker-build-reusable.yml@main
+    with:
+      dockerfile: app/nodes/Dockerfile
+      image: ghcr.io/${{ github.repository_owner }}/fastswap-nodes
+    secrets: inherit

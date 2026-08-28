@@ -1,0 +1,2 @@
+image: ghcr.io/naiemk/fastswap-ui:main
+port: 80

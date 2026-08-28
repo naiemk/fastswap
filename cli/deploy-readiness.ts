@@ -173,7 +173,7 @@ async function checkEvmChain(chainKey: string, config: FastSwapConfigFile, issue
   const ethHuman = formatEther(ethBal);
   const stableHuman = stable ? formatUnits(stableBal, stable.decimals) : "0";
   if (native && ethBal === 0n) {
-    issues.push({ level: "warn", message: `${chainKey}: receiver has 0 ${native.symbol} — relay payouts may queue` });
+    issues.push({ level: "warn", message: `${chainKey}: receiver has 0 ${native.symbol} — relayer may need gas top-up` });
   }
 
   let relayerOk = false;
@@ -192,7 +192,6 @@ async function checkEvmChain(chainKey: string, config: FastSwapConfigFile, issue
     deployed: true,
     fastSwapAddress: contracts.fastSwapAddress,
     sweeperAddress: contracts.sweeperAddress,
-    liquidityManagerAddress: contracts.liquidityManagerAddress,
     balances: { native: ethHuman, stable: stableHuman },
     relayerOk,
   };

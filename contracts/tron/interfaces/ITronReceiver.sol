@@ -1,1 +1,0 @@
-../../../../onchain-invoice/contracts/tron/interfaces/ITronReceiver.sol

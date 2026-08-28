@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { keccak256, toUtf8Bytes } from "ethers";
-import { TRON_ERC20_ABI, makeTron, waitTron } from "../fastSwapDemo/integration/live-helpers.js";
+import { TRON_ERC20_ABI, makeTron, waitTron } from "./helpers/tron-live.js";
 import {
   deriveTronInvoiceAddress,
   readTronTokenBalance,

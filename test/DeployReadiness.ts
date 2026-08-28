@@ -15,19 +15,11 @@ function collectIssues(
 }
 
 describe("deploy readiness guardrails", function () {
-  it("accepts scaled testnet liquidity bands", function () {
+  it("loads testnet config with execute node settings", function () {
     const config = loadFastSwapConfig(join(process.cwd(), "FastSwapConfig.testnet.yaml"));
     expect(config["active-chains"]).to.have.length(2);
-
-    for (const chainKey of config["active-chains"]) {
-      const chain = config.chains.find((c) => c.key === chainKey)!;
-      for (const receiver of chain.liquidity?.receivers ?? []) {
-        for (const band of receiver.tokens) {
-          const issues = collectIssues(chainKey, band.symbol, band);
-          expect(issues, `${chainKey} ${band.symbol}`).to.deep.equal([]);
-        }
-      }
-    }
+    expect(config.executeNode?.pollIntervalMs).to.be.a("number");
+    expect(config.nodes.execute?.progressPath).to.match(/execute-progress/);
   });
 
   it("flags corrupt and mis-ordered bands", function () {

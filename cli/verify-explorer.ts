@@ -110,7 +110,7 @@ async function buildEvmVerifyJobs(
       chainId,
       label: "FastSwapReceiver (proxy)",
       address: contracts.fastSwapAddress,
-      artifactPath: "contracts/proxy/ReceiverProxy.sol/ReceiverProxy.json",
+      artifactPath: "ReceiverProxy",
       constructorArgs: [contracts.fastSwapImplementation, initData],
     });
   }
@@ -121,7 +121,7 @@ async function buildEvmVerifyJobs(
       chainId,
       label: "InvoiceSweeper",
       address: contracts.sweeperAddress,
-      artifactPath: "contracts/InvoiceSweeper.sol/InvoiceSweeper.json",
+      artifactPath: "InvoiceSweeper",
       constructorArgs: [contracts.fastSwapAddress],
     });
   }
@@ -132,33 +132,8 @@ async function buildEvmVerifyJobs(
       chainId,
       label: "Forwarder",
       address: contracts.forwarderImplementation,
-      artifactPath: "contracts/Forwarder.sol/Forwarder.json",
+      artifactPath: "Forwarder",
       constructorArgs: [contracts.fastSwapAddress],
-    });
-  }
-
-  if (contracts.liquidityManagerImplementation) {
-    jobs.push({
-      chainKey,
-      chainId,
-      label: "LiquidityManager (implementation)",
-      address: contracts.liquidityManagerImplementation,
-      artifactPath: "contracts/liquiditymanager/LiquidityManager.sol/LiquidityManager.json",
-    });
-  }
-
-  if (contracts.liquidityManagerAddress && contracts.liquidityManagerImplementation) {
-    const lmArtifact = await readArtifact("contracts/liquiditymanager/LiquidityManager.sol/LiquidityManager.json");
-    const initData = new ContractFactory(lmArtifact.abi, lmArtifact.bytecode).interface.encodeFunctionData("initialize", [
-      ownerAddr,
-    ]);
-    jobs.push({
-      chainKey,
-      chainId,
-      label: "LiquidityManager (proxy)",
-      address: contracts.liquidityManagerAddress,
-      artifactPath: "contracts/proxy/ReceiverProxy.sol/ReceiverProxy.json",
-      constructorArgs: [contracts.liquidityManagerImplementation, initData],
     });
   }
 
