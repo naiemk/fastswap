@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { Contract, JsonRpcProvider, Wallet, ZeroAddress } from "ethers";
+import { network } from "hardhat";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,13 +15,9 @@ import {
   applyLocalOperatorEnv,
   deployLocalFastSwapChain,
   LOCAL_OPERATOR_PRIVATE_KEY,
-  spawnHardhatNode,
-  waitForRpc,
 } from "../../scripts/local-stack.js";
 
 const HOST = "127.0.0.1";
-const NODE_PORT = 18545;
-const SOURCE_CHAIN_ID = "101";
 const DEST_CHAIN_ID = "202";
 const FEE_BPS = 75n;
 const NODE_SECRET = "local-provider-execute-secret";
@@ -29,8 +26,9 @@ describe("dev:local Execute into a Local Provider Router", function () {
   this.timeout(120_000);
 
   it("pays, Sweep and Execute workers run, Router accepts, Invoice reaches complete", async function () {
-    const node = spawnHardhatNode({ port: NODE_PORT, chainId: Number(SOURCE_CHAIN_ID) });
-    const rpcUrl = `http://${HOST}:${NODE_PORT}`;
+    const jsonRpc = await network.createServer(undefined, HOST, 0);
+    const listening = await jsonRpc.listen();
+    const rpcUrl = `http://${HOST}:${listening.port}`;
     const directory = await mkdtemp(join(tmpdir(), "fastswap-local-execute-"));
     let server: FastSwapServer | undefined;
     let sweep: SweepNode | undefined;
@@ -38,22 +36,25 @@ describe("dev:local Execute into a Local Provider Router", function () {
     let provider: JsonRpcProvider | undefined;
 
     try {
-      await waitForRpc(rpcUrl, Number(SOURCE_CHAIN_ID));
       applyLocalOperatorEnv(["alice"]);
+      const probe = new JsonRpcProvider(rpcUrl);
+      const sourceChainId = String((await probe.getNetwork()).chainId);
+      probe.destroy();
+
       const deployed = await deployLocalFastSwapChain({
         key: "alice",
-        id: SOURCE_CHAIN_ID,
+        id: sourceChainId,
         name: "AliceChain",
         rpcUrl,
         stableSymbol: "DumUSDT",
         feeBps: Number(FEE_BPS),
       });
 
-      provider = new JsonRpcProvider(rpcUrl, Number(SOURCE_CHAIN_ID), { staticNetwork: true });
+      provider = new JsonRpcProvider(rpcUrl, Number(sourceChainId), { staticNetwork: true });
       const payer = new Wallet(LOCAL_OPERATOR_PRIVATE_KEY, provider);
       const recipient = Wallet.createRandom();
       const mockClients = createAggregatorClients({
-        mockRouters: { [SOURCE_CHAIN_ID]: deployed.router },
+        mockRouters: { [sourceChainId]: deployed.router },
       });
       const invoiceSdk = new OnchainInvoiceSdk({
         provider,
@@ -71,7 +72,7 @@ describe("dev:local Execute into a Local Provider Router", function () {
         quoteTtlMs: 90_000,
         chains: [
           {
-            id: SOURCE_CHAIN_ID,
+            id: sourceChainId,
             type: "evm",
             name: "AliceChain",
             nativeSymbol: "ETH",
@@ -81,7 +82,7 @@ describe("dev:local Execute into a Local Provider Router", function () {
             tokens: [
               {
                 symbol: "ETH",
-                chainId: SOURCE_CHAIN_ID,
+                chainId: sourceChainId,
                 decimals: 18,
                 isNative: true,
                 priceUsdMicros: "2000000000",
@@ -124,7 +125,7 @@ describe("dev:local Execute into a Local Provider Router", function () {
             pollIntervalMs: 60_000,
             chains: [
               {
-                id: SOURCE_CHAIN_ID,
+                id: sourceChainId,
                 type: "evm",
                 rpcUrl,
                 privateKey: LOCAL_OPERATOR_PRIVATE_KEY,
@@ -149,7 +150,7 @@ describe("dev:local Execute into a Local Provider Router", function () {
         clients: mockClients,
         chains: [
           {
-            id: SOURCE_CHAIN_ID,
+            id: sourceChainId,
             type: "evm",
             rpcUrl,
             fastSwapAddress: deployed.fastSwap,
@@ -160,7 +161,7 @@ describe("dev:local Execute into a Local Provider Router", function () {
       });
 
       const quote = await postJson(`${baseUrl}/quotes`, {
-        sourceChainId: SOURCE_CHAIN_ID,
+        sourceChainId,
         sourceToken: ZeroAddress,
         targetChainId: DEST_CHAIN_ID,
         targetToken: ZeroAddress,
@@ -195,7 +196,7 @@ describe("dev:local Execute into a Local Provider Router", function () {
       sweep?.stop();
       if (server) await server.close();
       provider?.destroy();
-      node.kill("SIGTERM");
+      await jsonRpc.close();
       await rm(directory, { recursive: true, force: true });
     }
   });

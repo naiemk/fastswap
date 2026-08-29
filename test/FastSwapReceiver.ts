@@ -5,8 +5,17 @@ import { mockAdapterId, signTestExecutePlan } from "./helpers/execute-plan.js";
 import { destFieldsFromIntentData } from "./helpers/intent.js";
 
 describe("FastSwapReceiver (aggregator executor)", function () {
+  let connection: Awaited<ReturnType<typeof network.create>>;
+
+  afterEach(async function () {
+    if (connection) {
+      await connection.close();
+    }
+  });
+
   async function deployFixture() {
-    const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & {
+    connection = await network.create();
+    const { ethers } = connection as Awaited<ReturnType<typeof network.create>> & {
       ethers: any;
     };
     const [owner, payer, recipient, sink] = await ethers.getSigners();

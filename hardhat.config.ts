@@ -4,6 +4,12 @@ import hardhatMocha from "@nomicfoundation/hardhat-mocha";
 
 export default defineConfig({
   plugins: [hardhatEthers, hardhatMocha],
+  test: {
+    mocha: {
+      timeout: 40_000,
+      require: ["./test/helpers/ci-watchdog.cjs"],
+    },
+  },
   solidity: {
     profiles: {
       default: {

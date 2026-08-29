@@ -39,7 +39,8 @@ describe("FastSwap system API (end-to-end)", function () {
   }
 
   it("creates invoice via API, pays, sweeps, executes, and GET invoice shows completion", async function () {
-    const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & { ethers: any };
+    const connection = (await network.create()) as Awaited<ReturnType<typeof network.create>> & { ethers: any };
+    const { ethers } = connection;
     const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployStack(ethers);
     const sourceChainId = String((await ethers.provider.getNetwork()).chainId);
     const destChainId = String(Number(sourceChainId) + 1);
@@ -131,11 +132,13 @@ describe("FastSwap system API (end-to-end)", function () {
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });
+      await connection.close();
     }
   });
 
   it("executes ERC20 source payment through mock adapter", async function () {
-    const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & { ethers: any };
+    const connection = (await network.create()) as Awaited<ReturnType<typeof network.create>> & { ethers: any };
+    const { ethers } = connection;
     const { owner, payer, recipient, sink, fastSwap, sweeper, adapterId } = await deployStack(ethers);
     const sourceChainId = String((await ethers.provider.getNetwork()).chainId);
     const destChainId = String(Number(sourceChainId) + 1);
@@ -222,6 +225,7 @@ describe("FastSwap system API (end-to-end)", function () {
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });
+      await connection.close();
     }
   });
 });

@@ -73,13 +73,17 @@ export function createFastSwapParseInvoice(signingSecret: string) {
 }
 
 async function readEvmInvoiceStatus(chain: Extract<ChainConfig, { type: "evm" }>, invoiceId: string) {
-  const provider = new JsonRpcProvider(chain.rpcUrl);
-  const contract = new Contract(chain.receiverAddress, FASTSWAP_RECEIVER_ABI, provider);
-  const [status] = await contract.invoiceStatus(invoiceId);
-  if (Number(status) === InvoiceStatus.Executed) return "complete";
-  if (Number(status) === InvoiceStatus.Refunded) return "refunded";
-  if (Number(status) === InvoiceStatus.Paid) return "paid";
-  return "waiting_payment";
+  const provider = new JsonRpcProvider(chain.rpcUrl, undefined, { staticNetwork: true });
+  try {
+    const contract = new Contract(chain.receiverAddress, FASTSWAP_RECEIVER_ABI, provider);
+    const [status] = await contract.invoiceStatus(invoiceId);
+    if (Number(status) === InvoiceStatus.Executed) return "complete";
+    if (Number(status) === InvoiceStatus.Refunded) return "refunded";
+    if (Number(status) === InvoiceStatus.Paid) return "paid";
+    return "waiting_payment";
+  } finally {
+    provider.destroy();
+  }
 }
 
 async function readTronInvoiceStatus(chain: Extract<ChainConfig, { type: "tron" }>, invoiceId: string) {

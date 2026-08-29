@@ -171,30 +171,39 @@ export class ExecuteRunner {
     plan: ExecutionPlan & { kind: "evm-contract" }
   ): Promise<{ txHash: string }> {
     const pk = executePrivateKey(chain);
-    const provider = new JsonRpcProvider(chain.rpcUrl);
-    const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
-    const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
-    const intent = decodeSwapIntent(invoice.data);
-    const minAmountOut = invoice.targetAmount;
-    const signature = await this.fetchExecuteSignature(invoiceId, plan.adapterId, plan.routeData, minAmountOut);
-    const tx = await contract.execute(
-      invoiceId,
-      plan.adapterId,
-      plan.routeData,
-      intent.destChainId,
-      intent.destToken,
-      intent.recipient,
-      signature
+    const network = /^\d+$/.test(chain.id) ? Number(chain.id) : undefined;
+    const provider = new JsonRpcProvider(
+      chain.rpcUrl,
+      network,
+      network !== undefined ? { staticNetwork: true } : undefined
     );
-    const receipt = await tx.wait();
-    await this.patchTrack(invoiceId, {
-      execute: {
-        status: "confirmed",
-        provider: plan.adapterId as unknown as AggregatorId,
-        tx: { chainId: chain.id, txHash: receipt.hash, status: "confirmed" },
-      },
-    });
-    return { txHash: receipt.hash };
+    try {
+      const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
+      const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
+      const intent = decodeSwapIntent(invoice.data);
+      const minAmountOut = invoice.targetAmount;
+      const signature = await this.fetchExecuteSignature(invoiceId, plan.adapterId, plan.routeData, minAmountOut);
+      const tx = await contract.execute(
+        invoiceId,
+        plan.adapterId,
+        plan.routeData,
+        intent.destChainId,
+        intent.destToken,
+        intent.recipient,
+        signature
+      );
+      const receipt = await tx.wait();
+      await this.patchTrack(invoiceId, {
+        execute: {
+          status: "confirmed",
+          provider: plan.adapterId as unknown as AggregatorId,
+          tx: { chainId: chain.id, txHash: receipt.hash, status: "confirmed" },
+        },
+      });
+      return { txHash: receipt.hash };
+    } finally {
+      provider.destroy();
+    }
   }
 
   private async refund(chain: ExecuteChainConfig, invoiceId: string) {
@@ -203,12 +212,21 @@ export class ExecuteRunner {
       return;
     }
     const pk = executePrivateKey(chain);
-    const provider = new JsonRpcProvider(chain.rpcUrl);
-    const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
-    const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
-    const tx = await contract.refund(invoiceId);
-    await tx.wait();
-    await this.patchTrack(invoiceId, { status: "refunded" });
+    const network = /^\d+$/.test(chain.id) ? Number(chain.id) : undefined;
+    const provider = new JsonRpcProvider(
+      chain.rpcUrl,
+      network,
+      network !== undefined ? { staticNetwork: true } : undefined
+    );
+    try {
+      const wallet = new Wallet(pk, provider) as unknown as ContractRunner;
+      const contract = new Contract(chain.fastSwapAddress, FASTSWAP_RECEIVER_ABI, wallet);
+      const tx = await contract.refund(invoiceId);
+      await tx.wait();
+      await this.patchTrack(invoiceId, { status: "refunded" });
+    } finally {
+      provider.destroy();
+    }
   }
 
   private async patchTrack(invoiceId: string, patch: Record<string, unknown>) {

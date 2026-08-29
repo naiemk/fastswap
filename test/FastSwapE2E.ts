@@ -11,9 +11,10 @@ import { destFieldsFromIntentData } from "./helpers/intent.js";
 
 describe("FastSwap end-to-end", function () {
   it("creates a quote, creates an invoice, sweeps payment, and executes via adapter", async function () {
-    const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & {
+    const connection = (await network.create()) as Awaited<ReturnType<typeof network.create>> & {
       ethers: any;
     };
+    const { ethers } = connection;
     const [owner, payer, recipient, sink] = await ethers.getSigners();
     const sourceChainId = String((await ethers.provider.getNetwork()).chainId);
     const destChainId = String(Number(sourceChainId) + 1);
@@ -117,6 +118,7 @@ describe("FastSwap end-to-end", function () {
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });
+      await connection.close();
     }
   });
 });
