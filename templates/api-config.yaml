@@ -1,0 +1,4 @@
+image: ghcr.io/naiemk/fastswap-api:main
+port: 4010
+config:
+  title: FastSwap API

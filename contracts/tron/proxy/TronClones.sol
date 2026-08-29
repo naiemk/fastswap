@@ -1,1 +1,0 @@
-../../../../onchain-invoice/contracts/tron/proxy/TronClones.sol

@@ -1,7 +1,7 @@
 import { Contract, JsonRpcProvider, getAddress } from "ethers";
 import { TronWeb } from "tronweb";
 
-import { FASTSWAP_RECEIVER_ABI } from "../shared/fastswap-abi.js";
+import { FASTSWAP_RECEIVER_ABI, InvoiceStatus } from "../shared/fastswap-abi.js";
 import { TRON_FASTSWAP_RECEIVER_ABI } from "../shared/tron-fastswap-abi.js";
 import { verifyInvoiceSignature } from "../shared/signing.js";
 import {
@@ -23,7 +23,6 @@ function normalizeData(data: string): string {
   return data.startsWith("0x") ? data : `0x${data}`;
 }
 
-/** TRON tokens are base58 (`T...`) and must not be passed through ethers `getAddress`. */
 function normalizeTokenField(token: string | undefined): string | undefined {
   if (!token) return undefined;
   return token.startsWith("0x") ? getAddress(token) : token;
@@ -73,37 +72,42 @@ export function createFastSwapParseInvoice(signingSecret: string) {
   };
 }
 
-async function readEvmSwapState(chain: Extract<ChainConfig, { type: "evm" }>, invoiceId: string) {
-  const provider = new JsonRpcProvider(chain.rpcUrl);
-  const targetContract = new Contract(chain.receiverAddress, FASTSWAP_RECEIVER_ABI, provider);
-  const state = await targetContract.swapState(invoiceId);
-  return { relayed: Boolean(state.relayed), processed: Boolean(state.processed), queued: Boolean(state.queued) };
+async function readEvmInvoiceStatus(chain: Extract<ChainConfig, { type: "evm" }>, invoiceId: string) {
+  const provider = new JsonRpcProvider(chain.rpcUrl, undefined, { staticNetwork: true });
+  try {
+    const contract = new Contract(chain.receiverAddress, FASTSWAP_RECEIVER_ABI, provider);
+    const [status] = await contract.invoiceStatus(invoiceId);
+    if (Number(status) === InvoiceStatus.Executed) return "complete";
+    if (Number(status) === InvoiceStatus.Refunded) return "refunded";
+    if (Number(status) === InvoiceStatus.Paid) return "paid";
+    return "waiting_payment";
+  } finally {
+    provider.destroy();
+  }
 }
 
-async function readTronSwapState(chain: Extract<ChainConfig, { type: "tron" }>, invoiceId: string) {
+async function readTronInvoiceStatus(chain: Extract<ChainConfig, { type: "tron" }>, invoiceId: string) {
   if (!chain.receiverAddress || chain.sweepMode === "eoa") {
-    return { relayed: false, processed: false, queued: false };
+    return "paid";
   }
   const tronWeb = new TronWeb({ fullHost: chain.fullHost });
   const contract = await tronWeb.contract(TRON_FASTSWAP_RECEIVER_ABI as never, chain.receiverAddress);
-  const state = await contract.swapState(invoiceId).call();
-  return { relayed: Boolean(state.relayed), processed: Boolean(state.processed), queued: Boolean(state.queued) };
+  const record = await contract.invoiceStatus(invoiceId).call();
+  const status = Number(record.status ?? record[0]);
+  if (status === InvoiceStatus.Executed) return "complete";
+  if (status === InvoiceStatus.Refunded) return "refunded";
+  if (status === InvoiceStatus.Paid) return "paid";
+  return "waiting_payment";
 }
 
 export function createFastSwapResolveTrackStatus(chains: ChainConfig[]) {
   return async (inv: SweepNodeInvoice): Promise<string> => {
-    const targetId = inv.targetChainId;
-    if (!targetId) return "paid";
-    const targetChain = chains.find((c) => c.id === targetId);
-    if (!targetChain) return "paid";
+    const sourceChain = chains.find((c) => c.id === inv.chainId);
+    if (!sourceChain) return "paid";
     try {
-      const state = targetChain.type === "tron"
-        ? await readTronSwapState(targetChain, inv.invoiceId)
-        : await readEvmSwapState(targetChain, inv.invoiceId);
-      if (state.processed) return "complete";
-      if (state.queued) return "queued";
-      if (state.relayed) return "relaying";
-      return "paid";
+      return sourceChain.type === "tron"
+        ? await readTronInvoiceStatus(sourceChain, inv.invoiceId)
+        : await readEvmInvoiceStatus(sourceChain, inv.invoiceId);
     } catch {
       return "paid";
     }

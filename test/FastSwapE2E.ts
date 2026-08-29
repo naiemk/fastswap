@@ -1,27 +1,40 @@
 import { expect } from "chai";
 import { network } from "hardhat";
-import { ethers as ethersLib } from "ethers";
+import { ethers as ethersLib, keccak256, toUtf8Bytes } from "ethers";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FastSwapServer } from "../server/server.js";
 import { OnchainInvoiceSdk } from "onchain-invoice";
+import { signTestExecutePlan } from "./helpers/execute-plan.js";
+import { destFieldsFromIntentData } from "./helpers/intent.js";
 
 describe("FastSwap end-to-end", function () {
-  it("creates a quote, creates an invoice, sweeps payment, relays, and pays recipient", async function () {
-    const { ethers } = (await network.create()) as Awaited<ReturnType<typeof network.create>> & {
+  it("creates a quote, creates an invoice, sweeps payment, and executes via adapter", async function () {
+    const connection = (await network.create()) as Awaited<ReturnType<typeof network.create>> & {
       ethers: any;
     };
-    const [owner, payer, recipient] = await ethers.getSigners();
+    const { ethers } = connection;
+    const [owner, payer, recipient, sink] = await ethers.getSigners();
+    const sourceChainId = String((await ethers.provider.getNetwork()).chainId);
+    const destChainId = String(Number(sourceChainId) + 1);
 
     const FastSwap = await ethers.getContractFactory("FastSwapReceiver");
     const implementation = await FastSwap.deploy();
     const Proxy = await ethers.getContractFactory("ReceiverProxy");
     const proxy = await Proxy.deploy(
       await implementation.getAddress(),
-      FastSwap.interface.encodeFunctionData("initialize", [owner.address])
+      FastSwap.interface.encodeFunctionData("initialize(address,uint16)", [owner.address, 75])
     );
     const fastSwap = await ethers.getContractAt("FastSwapReceiver", await proxy.getAddress());
+
+    const MockAdapter = await ethers.getContractFactory("MockAdapter");
+    const mockAdapter = await MockAdapter.deploy(await fastSwap.getAddress(), owner.address, await sink.getAddress());
+    const adapterId = keccak256(toUtf8Bytes("mock"));
+    await fastSwap.setAdapter(adapterId, await mockAdapter.getAddress());
+    await fastSwap.setTreasury(owner.address);
+    const relayerRole = await fastSwap.RELAYER_ROLE();
+    await fastSwap.grantRole(relayerRole, owner.address);
 
     const Sweeper = await ethers.getContractFactory("InvoiceSweeper");
     const sweeper = await Sweeper.deploy(await fastSwap.getAddress());
@@ -37,24 +50,24 @@ describe("FastSwap end-to-end", function () {
       invoiceSdk,
       chains: [
         {
-          id: "1",
+          id: sourceChainId,
           type: "evm",
           name: "Source",
           nativeSymbol: "ETH",
           sweeperAddress: await sweeper.getAddress(),
           fastSwapAddress: await fastSwap.getAddress(),
           explorerUrl: "",
-          tokens: [{ symbol: "ETH", chainId: "1", decimals: 18, isNative: true }],
+          tokens: [{ symbol: "ETH", chainId: sourceChainId, decimals: 18, isNative: true, priceUsdMicros: "2000000000" }],
         },
         {
-          id: "2",
+          id: destChainId,
           type: "evm",
           name: "Target",
           nativeSymbol: "ETH",
           sweeperAddress: await sweeper.getAddress(),
           fastSwapAddress: await fastSwap.getAddress(),
           explorerUrl: "",
-          tokens: [{ symbol: "ETH", chainId: "2", decimals: 18, isNative: true }],
+          tokens: [{ symbol: "ETH", chainId: destChainId, decimals: 18, isNative: true }],
         },
       ],
     });
@@ -63,9 +76,9 @@ describe("FastSwap end-to-end", function () {
 
     try {
       const quote = await postJson(`${baseUrl}/quotes`, {
-        sourceChainId: "1",
+        sourceChainId,
         sourceToken: ethersLib.ZeroAddress,
-        targetChainId: "2",
+        targetChainId: destChainId,
         targetToken: ethersLib.ZeroAddress,
         recipient: recipient.address,
         usdPack: 10,
@@ -75,22 +88,37 @@ describe("FastSwap end-to-end", function () {
       await payer.sendTransaction({ to: invoice.invoiceAddress, value: BigInt(invoice.amount) });
       await sweeper.sweepEth(invoice.invoiceId, invoice.data);
 
-      const sourceState = await fastSwap.swapState(invoice.invoiceId);
-      expect(sourceState.requested).to.equal(true);
+      const record = await fastSwap.invoiceRecord(invoice.invoiceId);
+      expect(record.status).to.equal(1n);
 
-      const targetAmount = sourceState.intent.targetAmount;
-      await fastSwap.addLiquidity(ethersLib.ZeroAddress, targetAmount, { value: targetAmount });
+      const routeData = ethersLib.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [ethersLib.ZeroAddress, "0x"]);
+      const recordBefore = await fastSwap.invoiceRecord(invoice.invoiceId);
+      const dest = destFieldsFromIntentData(invoice.data);
+      const signature = await signTestExecutePlan({
+        signer: owner,
+        fastSwap,
+        invoiceId: invoice.invoiceId,
+        adapterId,
+        routeData,
+        minAmountOut: recordBefore.minAmountOut,
+      });
+      await fastSwap.execute(
+        invoice.invoiceId,
+        adapterId,
+        routeData,
+        dest.destChainId,
+        dest.destToken,
+        dest.recipient,
+        signature
+      );
 
-      const before = await ethers.provider.getBalance(recipient.address);
-      await fastSwap.relaySwap(invoice.data);
-      const after = await ethers.provider.getBalance(recipient.address);
-
-      expect(after - before).to.equal(targetAmount);
-      const targetState = await fastSwap.swapState(invoice.invoiceId);
-      expect(targetState.processed).to.equal(true);
+      const executed = await fastSwap.invoiceRecord(invoice.invoiceId);
+      expect(executed.status).to.equal(2n);
+      expect(await sink.provider.getBalance(await sink.getAddress())).to.be.gt(0n);
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });
+      await connection.close();
     }
   });
 });

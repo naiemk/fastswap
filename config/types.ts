@@ -4,10 +4,11 @@ import type {
   FastSwapTokenPriceSourceConfig,
 } from "../shared/types.js";
 
-export type FastSwapChainType = "evm" | "tron";
+export type FastSwapChainType = "evm" | "tron" | "solana";
 
 export type FastSwapConfigToken = Omit<FastSwapTokenConfig, "chainId"> & {
   priceSources?: FastSwapTokenPriceSourceConfig[];
+  minLiquidity?: string;
 };
 
 export type LiquidityTokenBand = {
@@ -41,7 +42,6 @@ export type TronChainContracts = {
   fastSwapAddress?: string;
   sweeperAddress?: string;
   forwarderImplementation?: string;
-  liquidityManagerAddress?: string;
 };
 
 export type TronSweepSettings = {
@@ -71,11 +71,18 @@ export type FastSwapChainDefinition = {
   aggregatorSlug?: string;
   nativeSentinel?: string;
   router?: string;
-  /** Tron-only deployed addresses. EVM chains inherit deploy.contracts. */
-  contracts?: TronChainContracts;
+  /** Optional per-chain deployed addresses (local dev / TRON). EVM defaults to deploy.contracts. */
+  contracts?: Partial<DeployContracts>;
   /** TRON EOA sweep settings (default mode: eoa when contracts are unset). */
   sweep?: TronSweepSettings;
+  /** Solana commerce-invoice program + merchant for settle-to-relayer. */
+  solana?: {
+    programId?: string;
+    merchantPubkey?: string;
+    rpcUrl?: string;
+  };
   tokens: FastSwapConfigToken[];
+  /** @deprecated Liquidity bands removed in aggregator model. */
   liquidity?: ChainLiquidityConfig;
 };
 
@@ -86,8 +93,6 @@ export type DeployContracts = {
   fastSwapAddress: string;
   sweeperAddress: string;
   forwarderImplementation: string;
-  liquidityManagerImplementation: string;
-  liquidityManagerAddress: string;
 };
 
 export type DeployConfig = {
@@ -117,8 +122,6 @@ export type FastSwapConfigFile = {
     signingSecretEnv?: string;
     /** @deprecated Use signingSecretEnv. */
     nodeApiKey?: string;
-    uiPort?: number;
-    adminPort?: number;
     captcha: {
       provider: string;
       siteKey: string;
@@ -143,43 +146,23 @@ export type FastSwapConfigFile = {
     logScanOverlap: number;
     sqlitePath: string;
   };
-  relayNode: {
+  relayNode?: {
     pollIntervalMs: number;
     confirmations: number;
   };
-  liquidityMonitor: {
+  executeNode?: {
     pollIntervalMs: number;
   };
   deploy: DeployConfig;
-  liquidityManager: {
-    pollIntervalMs: number;
-    sqlitePath: string;
-    economics: {
-      gasGateBps: number;
-      minNotionalUsd: number;
-      maxStalenessSec: number;
-      riskCapUsd: number;
-      cooldownSec: number;
-      slippageBps: number;
-      maxGasPriceGwei?: number;
-    };
-  };
   nodes: {
     sweep: { auditLogPath: string };
-    relay: { progressPath: string; auditLogPath: string };
-    liqman: { auditLogPath: string };
+    relay?: { progressPath: string; auditLogPath: string };
+    execute?: { progressPath: string; auditLogPath: string; pollIntervalMs?: number };
   };
   chains: FastSwapChainDefinition[];
 };
 
-export type ResolvedChainContracts = {
-  fastSwapImplementation: string;
-  fastSwapAddress: string;
-  sweeperAddress: string;
-  forwarderImplementation: string;
-  liquidityManagerImplementation: string;
-  liquidityManagerAddress: string;
-};
+export type ResolvedChainContracts = DeployContracts;
 
 export type ResolvedFastSwapChain = FastSwapChainDefinition & {
   contracts: ResolvedChainContracts;

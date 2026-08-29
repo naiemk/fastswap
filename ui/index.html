@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FastSwap</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script src="/runtime-config.js"></script>
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -27,9 +28,9 @@
         <div class="hero-copy">
           <p class="eyebrow">No account. No wallet connect. Send from any wallet.</p>
           <h1>Swap urgent gas across chains in a few clicks.</h1>
-          <p class="lede">Choose what you need, get a fixed quote, pay one invoice address, and track every step.</p>
+          <p class="lede">Choose what you need, compare aggregator routes, pay one invoice address, and track every step.</p>
           <div class="hero-pills" aria-label="FastSwap highlights">
-            <span>Fixed quote</span>
+            <span>Best route</span>
             <span>No wallet connect</span>
             <span>Invoice tracked</span>
           </div>
@@ -39,9 +40,12 @@
           <div class="swap-card__header">
             <div>
               <p class="eyebrow">FastSwap</p>
-              <h2>Bridge payment</h2>
+              <h2>Cross-chain swap</h2>
             </div>
-            <span class="theme-chip" id="theme-chip">Auto theme</span>
+            <div class="mode-toggle" role="group" aria-label="UI mode">
+              <label><input type="radio" name="uiMode" value="simple" checked /> Simple</label>
+              <label><input type="radio" name="uiMode" value="advanced" /> Advanced</label>
+            </div>
           </div>
 
           <section class="swap-leg swap-leg--target" aria-labelledby="target-leg-label">
@@ -91,7 +95,17 @@
             <select name="sourceToken" id="source-token" class="native-select" aria-hidden="true" tabindex="-1"></select>
           </section>
 
-          <div id="quote-preview" class="quote-preview muted">Select tokens and enter a receive address to preview payment.</div>
+          <label class="address-field advanced-only hidden" id="custom-source-token-wrap">
+            <span>Custom source token address</span>
+            <input name="customSourceToken" placeholder="Paste ERC-20 / TRC-20 / mint address" />
+          </label>
+
+          <label class="address-field advanced-only hidden" id="custom-target-token-wrap">
+            <span>Custom receive token address</span>
+            <input name="customTargetToken" placeholder="Paste token address on destination chain" />
+          </label>
+
+          <div id="quote-preview" class="quote-preview muted">Select tokens and enter a receive address to preview estimated receive.</div>
 
           <label class="address-field">
             <span id="recipient-label">Address to receive your funds</span>

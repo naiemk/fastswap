@@ -282,6 +282,37 @@ p {
   margin-bottom: 4px;
 }
 
+.mode-toggle {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.mode-toggle label {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 4px;
+}
+
+.advanced-only.hidden {
+  display: none;
+}
+
+.quote-sources-table {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.quote-sources-table__row {
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+}
+
 .swap-leg {
   align-items: center;
   background: var(--surface);

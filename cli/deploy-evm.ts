@@ -13,13 +13,12 @@ import { deployEvmStackViaCreateX, predictStackAddresses } from "./createx.js";
 import { resolveEvmOwnerAddress } from "./owner.js";
 
 export async function loadDeployArtifacts() {
-  const [fastSwap, proxy, sweeper, liquidityManager] = await Promise.all([
+  const [fastSwap, proxy, sweeper] = await Promise.all([
     readArtifact("contracts/FastSwapReceiver.sol/FastSwapReceiver.json"),
-    readArtifact("contracts/proxy/ReceiverProxy.sol/ReceiverProxy.json"),
-    readArtifact("contracts/InvoiceSweeper.sol/InvoiceSweeper.json"),
-    readArtifact("contracts/liquiditymanager/LiquidityManager.sol/LiquidityManager.json"),
+    readArtifact("ReceiverProxy"),
+    readArtifact("InvoiceSweeper"),
   ]);
-  return { fastSwap, proxy, sweeper, liquidityManager };
+  return { fastSwap, proxy, sweeper };
 }
 
 export async function predictEvmAddresses(config: FastSwapConfigFile, owner: string) {
@@ -27,6 +26,7 @@ export async function predictEvmAddresses(config: FastSwapConfigFile, owner: str
   return predictStackAddresses({
     createx: resolveCreateXAddress(config),
     owner,
+    feeBps: Number(config.quote.feeBps),
     salts: getResolvedDeploySalts(config),
     artifacts,
   });
@@ -37,7 +37,6 @@ export async function deployEvmStackToChain(input: {
   chainKey: string;
   privateKey: string;
   owner?: string;
-  includeLiquidityManager?: boolean;
   save?: boolean;
   configPath?: string;
 }): Promise<{ chainKey: string; addresses: Awaited<ReturnType<typeof deployEvmStackViaCreateX>> }> {
@@ -66,16 +65,16 @@ export async function deployEvmStackToChain(input: {
     signer: wallet,
     createx: resolveCreateXAddress(input.config),
     owner,
+    feeBps: Number(input.config.quote.feeBps),
     salts: getResolvedDeploySalts(input.config),
     artifacts,
-    includeLiquidityManager: input.includeLiquidityManager,
     onProgress:
       input.save === false
         ? undefined
         : async (patch) => {
             workingConfig = updateDeployContracts(workingConfig, patch);
             saveFastSwapConfig(workingConfig, input.configPath);
-            console.log(`[deploy] updated FastSwapConfig.yaml (${Object.keys(patch).join(", ")})`);
+            console.log(`[deploy] updated config (${Object.keys(patch).join(", ")})`);
           },
   });
 
@@ -92,7 +91,6 @@ export async function deployEvmStackToActiveChains(input: {
   privateKey: string;
   chainKeys?: string[];
   owner?: string;
-  includeLiquidityManager?: boolean;
   save?: boolean;
   configPath?: string;
 }) {
@@ -107,7 +105,6 @@ export async function deployEvmStackToActiveChains(input: {
         chainKey,
         privateKey: input.privateKey,
         owner: input.owner,
-        includeLiquidityManager: input.includeLiquidityManager,
         save: input.save,
         configPath: input.configPath,
       })
@@ -122,7 +119,6 @@ export async function readEvmOnChainState(input: {
   addresses: {
     fastSwapAddress: string;
     sweeperAddress: string;
-    liquidityManagerAddress?: string;
   };
 }) {
   const chain = getChainDefinition(input.config, input.chainKey);
@@ -130,7 +126,7 @@ export async function readEvmOnChainState(input: {
   const provider = new JsonRpcProvider(chain.rpcUrl);
 
   const fastSwapArtifact = await readArtifact("contracts/FastSwapReceiver.sol/FastSwapReceiver.json");
-  const sweeperArtifact = await readArtifact("contracts/InvoiceSweeper.sol/InvoiceSweeper.json");
+  const sweeperArtifact = await readArtifact("InvoiceSweeper");
   const fastSwap = new Contract(input.addresses.fastSwapAddress, fastSwapArtifact.abi, provider);
   const sweeper = new Contract(input.addresses.sweeperAddress, sweeperArtifact.abi, provider);
 
@@ -142,18 +138,12 @@ export async function readEvmOnChainState(input: {
     fastSwap.paused().catch(() => false),
   ]);
 
-  let liquidityManagerCode = "0x";
-  if (input.addresses.liquidityManagerAddress) {
-    liquidityManagerCode = await provider.getCode(input.addresses.liquidityManagerAddress);
-  }
-
   return {
     chainKey: input.chainKey,
     chainId: chain.id,
     deployed: {
       fastSwap: fastSwapCode !== "0x",
       sweeper: sweeperCode !== "0x",
-      liquidityManager: liquidityManagerCode !== "0x",
     },
     sweeperReceiver: String(receiver),
     forwarderImplementation: String(forwarderImplementation),

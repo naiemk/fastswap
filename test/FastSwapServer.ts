@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { AbiCoder } from "ethers";
+import { AbiCoder, hexlify, zeroPadValue } from "ethers";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +32,7 @@ describe("FastSwapServer", function () {
         usdPack: 10,
       });
       expect(quote.quoteId).to.be.a("string");
+      expect(quote.selectedProvider).to.equal("mock");
 
       const invoice = await postJson(`${baseUrl}/invoices`, { quoteId: quote.quoteId });
       expect(invoice.invoiceId).to.be.a("string");
@@ -256,8 +257,8 @@ describe("FastSwapServer", function () {
       const listed = await fetch(`${baseUrl}/liquidity`, {
         headers: { "x-api-key": "node-secret" },
       }).then((r) => r.json());
-      expect(listed.liquidity[0].chainId).to.equal("base");
-      expect(listed.liquidity[0].balance).to.equal("100");
+      expect(listed.liquidity).to.deep.equal([]);
+      expect(listed.deprecated).to.equal(true);
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });
@@ -339,8 +340,8 @@ describe("FastSwapServer", function () {
         recipient: "0x0000000000000000000000000000000000000001",
         usdAmountMicros: "20000000",
       });
-      expect(quote.targetAmount).to.equal("10000000000000000");
-      expect(quote.sourceAmount).to.equal("10075000000000000");
+      expect(quote.targetAmount).to.equal("9776621250000000");
+      expect(quote.sourceAmount).to.equal("10000000000000000");
       expect(quote.feeAmount).to.equal("75000000000000");
     } finally {
       await server.close();
@@ -411,12 +412,14 @@ describe("FastSwapServer", function () {
 
       const [decoded] = AbiCoder.defaultAbiCoder().decode(
         [
-          "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,address sourceToken,uint256 sourceAmount,uint256 targetChainId,address targetToken,uint256 targetAmount,address recipient,uint64 expiresAt,address refundAddress)",
+          "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,bytes sourceToken,uint256 minSourceAmount,uint256 destChainId,bytes destToken,uint256 minAmountOut,bytes recipient,bytes refundTo,uint64 expiresAt,uint16 slippageBps)",
         ],
         invoice.data
       );
-      expect(decoded.sourceToken).to.equal(tronAddressToEvmHex(tronUsdt));
-      expect(decoded.targetToken).to.equal("0x0000000000000000000000000000000000000000");
+      expect(decoded.sourceToken.toLowerCase()).to.equal(
+        hexlify(zeroPadValue(tronAddressToEvmHex(tronUsdt), 20)).toLowerCase()
+      );
+      expect(decoded.destToken).to.equal("0x");
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });

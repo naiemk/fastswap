@@ -17,7 +17,7 @@ describe("CreateX deployment", function () {
   });
 
   it("predicts CreateX CREATE2 addresses using guarded salts", async function () {
-    const sweeper = await readArtifact("contracts/InvoiceSweeper.sol/InvoiceSweeper.json");
+    const sweeper = await readArtifact("InvoiceSweeper");
     const initCode = await buildInitCode(sweeper, ["0x00000000000000000000000000000000000000c0"]);
 
     const predicted = predictCreateXAddress(CREATEX_ADDRESS, salts.invoiceSweeper, initCode);
@@ -30,16 +30,15 @@ describe("CreateX deployment", function () {
   });
 
   it("uses distinct salts for each stack contract", async function () {
-    const [fastSwap, proxy, sweeper, liquidityManager] = await Promise.all([
+    const [fastSwap, proxy, sweeper] = await Promise.all([
       readArtifact("contracts/FastSwapReceiver.sol/FastSwapReceiver.json"),
-      readArtifact("contracts/proxy/ReceiverProxy.sol/ReceiverProxy.json"),
-      readArtifact("contracts/InvoiceSweeper.sol/InvoiceSweeper.json"),
-      readArtifact("contracts/liquiditymanager/LiquidityManager.sol/LiquidityManager.json"),
+      readArtifact("ReceiverProxy"),
+      readArtifact("InvoiceSweeper"),
     ]);
 
     const owner = "0x000000000000000000000000000000000000dEaD";
     const fastSwapFactory = new ContractFactory(fastSwap.abi, fastSwap.bytecode);
-    const initData = fastSwapFactory.interface.encodeFunctionData("initialize", [owner]);
+    const initData = fastSwapFactory.interface.encodeFunctionData("initialize(address,uint16)", [owner, 75]);
 
     const fastSwapImplInit = await buildInitCode(fastSwap);
     const fastSwapImpl = predictCreateXAddress(CREATEX_ADDRESS, salts.fastSwapImplementation, fastSwapImplInit);
@@ -50,14 +49,7 @@ describe("CreateX deployment", function () {
     const sweeperInit = await buildInitCode(sweeper, [fastSwapProxy]);
     const sweeperAddress = predictCreateXAddress(CREATEX_ADDRESS, salts.invoiceSweeper, sweeperInit);
 
-    const lmFactory = new ContractFactory(liquidityManager.abi, liquidityManager.bytecode);
-    const lmInitData = lmFactory.interface.encodeFunctionData("initialize", [owner]);
-    const lmImplInit = await buildInitCode(liquidityManager);
-    const lmImpl = predictCreateXAddress(CREATEX_ADDRESS, salts.liquidityManagerImplementation, lmImplInit);
-    const lmProxyInit = await buildInitCode(proxy, [lmImpl, lmInitData]);
-    const lmProxy = predictCreateXAddress(CREATEX_ADDRESS, salts.liquidityManagerProxy, lmProxyInit);
-
-    const addresses = [fastSwapImpl, fastSwapProxy, sweeperAddress, lmImpl, lmProxy];
+    const addresses = [fastSwapImpl, fastSwapProxy, sweeperAddress];
     expect(new Set(addresses).size).to.equal(addresses.length);
   });
 });

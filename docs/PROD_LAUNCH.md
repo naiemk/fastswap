@@ -1,126 +1,80 @@
-# FastSwap production launch runbook
+# FastSwap production launch
 
 ## Architecture
 
-- **UI**: static files in [`ui/`](../ui/) on Vercel (`FASTSWAP_API_BASE` → public API URL).
-- **API**: Docker [`docker/compose/api.yml`](../docker/compose/api.yml) on VPS.
-- **Nodes**: Docker [`docker/compose/nodes.yml`](../docker/compose/nodes.yml) (sweep, relay, liqman) on same VPS or private network.
-- **Config**: [`FastSwapConfig.yaml`](../FastSwapConfig.yaml) — single source of truth for chains, tokens, liquidity, contract addresses.
-- **Secrets**: `.env` only — private keys, `API_SIGNING_SECRET`, RPC URLs, router addresses.
+- **UI**: static checkout + admin in [`ui/`](../ui/) — Docker image `ghcr.io/naiemk/fastswap-ui`
+- **API**: Node server — `ghcr.io/naiemk/fastswap-api` on port 4010
+- **Nodes**: sweep + execute workers — `ghcr.io/naiemk/fastswap-nodes` (`FASTSWAP_ROLE=sweep|execute`)
+- **Gateway**: vibed-infra nginx profile (`deploy/dist/install-gateway.sh`)
+- **Config**: [`FastSwapConfig.yaml`](../FastSwapConfig.yaml) mounted at `/config/FastSwapConfig.yaml`
+- **Secrets**: `.env` on VPS — private keys, `API_SIGNING_SECRET`, RPC URLs
 
 ## 1. Prepare environment
 
 ```bash
 cp .env.example .env
-cp docker/compose/.env.example docker/compose/.env
 ```
 
-Fill all values. Set `server.publicUrl` in `FastSwapConfig.yaml` to your public API URL. Enable captcha in YAML only after Cloudflare Turnstile keys are set.
+Fill RPC URLs, operator keys, Turnstile keys (if captcha enabled), and `FASTSWAP_OWNER_ADDRESS`.
 
-## 2. Edit config
+Set `server.publicUrl` in `FastSwapConfig.yaml` to your public API URL (gateway rewrites to the API container).
 
-- Set `active-chains`, token definitions, liquidity bands, and deploy salts (`namespace` / `version`).
-- Leave `deploy.contracts` empty until deploy completes.
-
-## 3. Predict addresses
+## 2. Deploy contracts (EVM)
 
 ```bash
-npm run fastswap:cli:predict
+npm run compile
+npm run cli:predict
+npm run cli -- --deploy-evm-all
 ```
 
-## 4. Deploy contracts
+TRON uses EOA sweep + wallet payout (`sweep.mode: eoa`); no on-chain FastSwap receiver deploy.
+
+## 3. Post-deploy configure
+
+Grant roles and register adapters. Use the same cold multisig for `DEFAULT_ADMIN_ROLE`, Ownable `owner`, and CreateX deploy `owner` so upgrades, role grants, and `transferOwnership` stay aligned.
 
 ```bash
-npm run fastswap:cli -- --deploy-evm-all
-npm run fastswap:cli -- --deploy-tron
+npm run cli -- --configure-role --chain base --role RELAYER_ROLE --account 0x...
+npm run cli -- --configure-role --chain base --role PAUSER_ROLE --account 0x...
+npm run cli -- --configure-role --chain base --role SIGNER_ROLE --account 0x...
+npm run cli -- --configure-adapter --chain base --adapter-id symbiosis --adapter-address 0x...
+npm run cli -- --validate
+npm run cli:verify
 ```
 
-Addresses are written incrementally to `FastSwapConfig.yaml`.
-
-## 5. Post-deploy configure (EVM examples)
-
-Grant roles to operational wallets (revoke from deployer where appropriate):
+## 4. Package and deploy to VPS
 
 ```bash
-npm run fastswap:cli -- --configure-role --chain base --role RELAYER_ROLE --account 0x...
-npm run fastswap:cli -- --configure-role --chain base --role AGGREGATE_ALL_ROLE --account 0x...
+npm run package
+git add deploy/dist && git commit -m "package dist"
 ```
 
-Sweeping is permissionless on-chain (no `SWEEPER_ROLE`). The sweep node only needs `API_SIGNING_SECRET` to authenticate to the API.
-
-Allow LiquidityManager router and aggregators:
+On the VPS (see generated `deploy/dist/README.md`):
 
 ```bash
-npm run fastswap:cli -- --configure-router --chain base --router 0x...
-npm run fastswap:cli -- --configure-aggregator --chain base --aggregator 0x...
+wget -qO- .../deploy/dist/install-api.sh | bash
+# edit .env.api, copy FastSwapConfig.yaml to /config, ./start-api.sh
+
+wget -qO- .../deploy/dist/install-ui.sh | bash
+wget -qO- .../deploy/dist/install-nodes.sh | bash
+wget -qO- .../deploy/dist/install-gateway.sh | bash
 ```
 
-Set liquidity floors and seed native liquidity:
+Set `FASTSWAP_API_BASE` in the UI runtime config (gateway / `.env.ui`) to the public API origin.
+
+## 5. Local development
 
 ```bash
-npm run fastswap:cli -- --configure-floor --chain base --token NATIVE --amount 20000000000000000
-npm run fastswap:cli -- --configure-liquidity --chain base --amount 100000000000000000
+npm run dev:local
+# open ui/ with FASTSWAP_API_BASE=http://127.0.0.1:4010
+npm run dev:pay -- <invoiceId>
 ```
 
-Smoke-test pause/unpause:
+Uses [`FastSwapConfig.local.yaml`](../FastSwapConfig.local.yaml) (generated) with captcha disabled.
+
+## Health checks
 
 ```bash
-npm run fastswap:cli -- --configure-pause --chain base
-npm run fastswap:cli -- --configure-unpause --chain base
+curl -fsS https://app.example.com/health
+curl -fsS https://app.example.com/config
 ```
-
-`aggregateAll` (ops-only, EVM): allow aggregator then run `npm run fastswap:aggregate -- --chain base --token NATIVE --aggregator 0x... --call-data 0x`.
-
-## 6. Validate and verify
-
-```bash
-npm run fastswap:cli -- --validate
-npm run fastswap:cli:verify
-```
-
-Tron explorer verification is manual.
-
-## 7. Start Docker services
-
-From repo root (ensure `FastSwapConfig.yaml` is filled and `docker/compose/.env` is set):
-
-```bash
-npm run docker:build
-npm run docker:up:api
-npm run docker:up:nodes
-# Or start the full stack: npm run docker:up
-```
-
-Check API health:
-
-```bash
-curl -s http://localhost:4010/health
-```
-
-## 8. Deploy UI (Vercel)
-
-- Root or output directory: `ui`
-- Environment: `FASTSWAP_API_BASE=https://your-api.example.com`
-- Set `CORS_ORIGIN` on the API to your Vercel origin.
-
-## 9. Testnet smoke
-
-1. `POST /quotes` → receive quote
-2. `POST /invoices` → receive signed invoice + payment address
-3. Pay on source chain
-4. Confirm sweep node marks paid; relay completes on target
-5. Confirm invoice status reaches `complete`
-
-## Accepted launch risks
-
-| Risk | Mitigation |
-|------|------------|
-| Trusted relayer (`RELAYER_ROLE`) | Dedicated hot wallet, monitoring, pause, minimal balance |
-| Customer funds commingled with liquidity | Pause + `adminSweep` above floor; ops runbook |
-| No on-chain refund path | Manual refund to `refundAddress` via ops |
-
-See [TESTNET_MIRROR.md](TESTNET_MIRROR.md) for the Sepolia + Nile go-live bootstrap (real prices + Turnstile).
-
-## Audit logs
-
-Per-service append-only JSONL under `./data/` (configurable in YAML). Replay/merge with `scripts/audit-merge.ts`.

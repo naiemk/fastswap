@@ -1,10 +1,6 @@
 import { Contract, JsonRpcProvider } from "ethers";
 import { TronWeb } from "tronweb";
 
-import { collectLiquidity } from "../nodes/liquidity-monitor/index.js";
-import { FASTSWAP_RECEIVER_ABI } from "../shared/fastswap-abi.js";
-import { TRON_FASTSWAP_RECEIVER_ABI } from "../shared/tron-fastswap-abi.js";
-
 import type { FastSwapStatus, FastSwapInvoice } from "../shared/types.js";
 import {
   isTronEoaChain,
@@ -14,7 +10,7 @@ import {
   resolveTronSweepSettings,
 } from "../config/load.js";
 import type { FastSwapChainDefinition, ResolvedFastSwapChain } from "../config/types.js";
-import { buildMarketQuoteSources } from "./market-quote-source.js";
+import { createAggregatorClientsFromEnv, mockRoutersFromChains } from "../aggregators/index.js";
 import { FastSwapServer, type FastSwapServerOptions, type InvoiceAddressSdk } from "./server.js";
 
 import type { FastSwapConfigFile } from "../config/types.js";
@@ -25,6 +21,8 @@ import {
   TronInvoiceSdk,
   TRON_NATIVE_TOKEN,
 } from "onchain-invoice";
+import { FASTSWAP_RECEIVER_ABI, InvoiceStatus } from "../shared/fastswap-abi.js";
+import { TRON_FASTSWAP_RECEIVER_ABI } from "../shared/tron-fastswap-abi.js";
 
 function requireSigningSecret(config: FastSwapConfigFile): string {
   const envName = config.server.signingSecretEnv ?? "API_SIGNING_SECRET";
@@ -66,11 +64,14 @@ export function buildFastSwapServerOptions(config: FastSwapConfigFile): FastSwap
     invoiceSdksByChainId,
     chains,
     packs: config.quote.packsUsdMicros.map((usdAmountMicros: string) => ({ usdAmountMicros })),
-    quoteSources: buildMarketQuoteSources(chains),
+    quoteClients: createAggregatorClientsFromEnv(process.env, {
+      mockRouters: mockRoutersFromChains(config.chains),
+    }),
     nodeAuthSecret: requireSigningSecret(config),
+    executePlanSignerPrivateKey: process.env.EXECUTE_PLAN_SIGNER_PRIVATE_KEY,
     feeBps: BigInt(config.quote.feeBps),
-    maxDeviationBps: BigInt(config.quote.maxDeviationBps),
     quoteTtlMs: config.quote.quoteTtlSec * 1000,
+    defaultSlippageBps: 100,
     requireCaptchaForQuotes: captcha.requireForQuotes === true,
     requireCaptchaForInvoices: captcha.requireForInvoices === true,
     captchaSiteKey: captcha.siteKey,
@@ -82,7 +83,6 @@ export function buildFastSwapServerOptions(config: FastSwapConfigFile): FastSwap
           })
       : undefined,
     resolveInvoiceStatus: createStatusResolver(resolved),
-    resolveLiquidity: () => collectBootstrapLiquidity(resolved),
   };
 }
 
@@ -115,6 +115,9 @@ function buildInvoiceSdk(chain: ResolvedFastSwapChain): InvoiceAddressSdk {
       feeLimit: chain.feeLimit,
     });
   }
+  if (chain.type === "solana") {
+    throw new Error("Solana invoice SDK wiring: use onchain-invoice SolanaSdk with solanaMerchant from chain config");
+  }
   const provider = new JsonRpcProvider(chain.rpcUrl);
   return new OnchainInvoiceSdk({ provider, sweeperAddress: chain.contracts.sweeperAddress });
 }
@@ -126,25 +129,18 @@ function createStatusResolver(chains: ResolvedFastSwapChain[]) {
   );
   return async (invoice: FastSwapInvoice): Promise<FastSwapStatus | undefined> => {
     const source = yamlById.get(invoice.sourceChainId);
-    const target = yamlById.get(invoice.targetChainId);
-    if (!source || !target) return invoice.status;
+    if (!source) return invoice.status;
 
     const paid = await readSourcePayment(source, invoice, sdks.get(source.id));
     if (paid === 0n) return "waiting_payment";
 
-    if (invoice.payout?.status === "confirmed") return "complete";
-    if (invoice.relay?.status === "confirmed" && target.type === "tron" && isTronEoaChain(target)) {
-      return "relaying";
-    }
-
-    const state = await readTargetSwapState(target, invoice.invoiceId);
-    if (state.processed) return "complete";
-    if (state.queued) return "queued";
-    if (state.relayed) return "relaying";
-    if (invoice.status === "relaying" || invoice.status === "queued" || invoice.status === "complete") {
-      return invoice.status;
-    }
-    return "paid";
+    const sourceStatus = await readSourceInvoiceStatus(source, invoice.invoiceId);
+    if (sourceStatus === InvoiceStatus.Executed) return "complete";
+    if (sourceStatus === InvoiceStatus.Refunded) return "refunded";
+    if (invoice.execute?.status === "submitted" || invoice.status === "bridging") return "bridging";
+    if (invoice.status === "executing") return "executing";
+    if (paid > 0n) return "paid";
+    return invoice.status;
   };
 }
 
@@ -183,45 +179,20 @@ async function readSourcePayment(
   return BigInt(payment.amount.toString());
 }
 
-async function readTargetSwapState(chain: ResolvedFastSwapChain, swapId: string) {
+async function readSourceInvoiceStatus(chain: ResolvedFastSwapChain, invoiceId: string): Promise<number> {
   if (chain.type === "tron" && isTronEoaChain(chain)) {
-    return { relayed: false, processed: false, queued: false };
+    return InvoiceStatus.Paid;
   }
   if (chain.type === "tron") {
     const tronWeb = new TronWeb({ fullHost: chain.fullHost ?? chain.rpcUrl ?? "" });
     const contract = await tronWeb.contract(TRON_FASTSWAP_RECEIVER_ABI as never, chain.contracts.fastSwapAddress);
-    const state = await contract.swapState(swapId).call();
-    return { relayed: Boolean(state.relayed), processed: Boolean(state.processed), queued: Boolean(state.queued) };
+    const record = await contract.invoiceRecord(invoiceId).call();
+    return Number(record.status);
   }
   const provider = new JsonRpcProvider(chain.rpcUrl);
   const contract = new Contract(chain.contracts.fastSwapAddress, FASTSWAP_RECEIVER_ABI, provider);
-  const state = await contract.swapState(swapId);
-  return { relayed: state.relayed, processed: state.processed, queued: state.queued };
-}
-
-async function collectBootstrapLiquidity(chains: ResolvedFastSwapChain[]) {
-  const summaries = await Promise.all(
-    chains.map((chain) => {
-      const sweep = chain.type === "tron" ? resolveTronSweepSettings(chain) : undefined;
-      const walletAddress =
-        chain.type === "tron" && isTronEoaChain(chain) ? sweep?.sponsorAddress || chain.contracts.fastSwapAddress : chain.contracts.fastSwapAddress;
-      return collectLiquidity({
-        id: chain.id,
-        type: chain.type,
-        rpcUrl: chain.rpcUrl,
-        fullHost: chain.fullHost ?? chain.rpcUrl,
-        fastSwapAddress: walletAddress,
-        nodeWalletMode: chain.type === "tron" && isTronEoaChain(chain),
-        tokens: chain.tokens.map((token) => ({
-          symbol: token.symbol,
-          address: token.isNative ? undefined : token.address,
-          minLiquidity: token.minLiquidity ?? "0",
-          floor: chain.liquidity?.receivers?.[0]?.tokens.find((t) => t.symbol === token.symbol)?.floor,
-        })),
-      }).catch(() => []);
-    })
-  );
-  return summaries.flat();
+  const [status] = await contract.invoiceStatus(invoiceId);
+  return Number(status);
 }
 
 export const DEFAULT_MAIN_CONFIG = resolveConfigPath();

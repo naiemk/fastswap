@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type {
   FastSwapChainTx,
+  FastSwapExecuteInfo,
   FastSwapInvoice,
   FastSwapInvoiceTrackPatch,
   FastSwapPayoutInfo,
@@ -135,6 +136,16 @@ function mergeSweep(base: FastSwapSweepInfo | undefined, patch: FastSwapInvoiceT
   return next;
 }
 
+function mergeExecute(
+  base: FastSwapExecuteInfo | undefined,
+  patch: FastSwapInvoiceTrackPatch["execute"]
+): FastSwapExecuteInfo | undefined {
+  if (patch === undefined) return base;
+  const next: FastSwapExecuteInfo = { ...(base ?? {}), ...patch };
+  if (patch.tx !== undefined || base?.tx !== undefined) next.tx = mergeChainTx(base?.tx, patch.tx);
+  return next;
+}
+
 function mergeRelay(base: FastSwapRelayInfo | undefined, patch: FastSwapInvoiceTrackPatch["relay"]): FastSwapRelayInfo | undefined {
   if (patch === undefined) return base;
   const next: FastSwapRelayInfo = { ...(base ?? {}), ...patch };
@@ -157,6 +168,7 @@ function mergeInvoiceTrack(existing: FastSwapInvoice, patch: FastSwapInvoiceTrac
     ...existing,
     status: patch.status ?? existing.status,
     sweep: mergeSweep(existing.sweep, patch.sweep),
+    execute: mergeExecute(existing.execute, patch.execute),
     relay: mergeRelay(existing.relay, patch.relay),
     payout: mergePayout(existing.payout, patch.payout),
   };

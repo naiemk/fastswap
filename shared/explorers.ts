@@ -30,6 +30,12 @@ export function enrichFastSwapInvoiceExplorers(
           sourcePayment: fillExplorer(byId, invoice.sweep.sourcePayment),
         }
       : undefined,
+    execute: invoice.execute
+      ? {
+          ...invoice.execute,
+          tx: fillExplorer(byId, invoice.execute.tx),
+        }
+      : undefined,
     relay: invoice.relay
       ? {
           ...invoice.relay,

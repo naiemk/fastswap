@@ -18,7 +18,8 @@
     "nodes/**/*.ts",
     "cli/**/*.ts",
     "shared/**/*.ts",
-    "config/**/*.ts"
+    "config/**/*.ts",
+    "aggregators/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "lm-dist", "demo-dist", "test", "LiquidityManager", "fastSwapDemo"]
+  "exclude": ["node_modules", "/dist", "test", "scripts"]
 }

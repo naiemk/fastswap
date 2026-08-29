@@ -1,1 +1,0 @@
-../../../onchain-invoice/contracts/interfaces/IReceiver.sol

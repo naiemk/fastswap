@@ -4,8 +4,6 @@ export const DEPLOY_SALT_CONTRACTS = [
   "fastSwapImplementation",
   "fastSwapProxy",
   "invoiceSweeper",
-  "liquidityManagerImplementation",
-  "liquidityManagerProxy",
 ] as const;
 
 export type DeploySaltContract = (typeof DEPLOY_SALT_CONTRACTS)[number];

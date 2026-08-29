@@ -1,0 +1,1 @@
+globalThis.FASTSWAP_API_BASE = "__FASTSWAP_API_BASE__";

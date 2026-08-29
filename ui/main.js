@@ -46,7 +46,8 @@ const sourceChainLabel = document.querySelector("#source-chain-label");
 const sourceTokenLabel = document.querySelector("#source-token-label");
 const targetChainLabel = document.querySelector("#target-chain-label");
 const targetTokenLabel = document.querySelector("#target-token-label");
-let appConfig = { chains: [] };
+let appConfig = { chains: [], packs: [], modes: ["simple", "advanced"] };
+let uiMode = "simple";
 let turnstileToken = "";
 let quoteDebounceTimer = null;
 let quoteRequestSeq = 0;
@@ -202,6 +203,7 @@ async function init() {
   setupAutoTheme();
   const response = await fetch(`${apiBase}/config`);
   appConfig = await response.json();
+  syncModeUi();
   renderTokenOptions();
   setupCaptcha();
   updateRecipientLabel();
@@ -564,14 +566,35 @@ async function refreshPreviewQuote(options = {}) {
   }
 }
 
+form.addEventListener("change", (event) => {
+  if (event.target?.name === "uiMode") {
+    uiMode = String(event.target.value);
+    syncModeUi();
+    renderSourceTokenOptions();
+    renderTargetTokenOptions();
+    activeQuote = undefined;
+    schedulePreviewQuote();
+  }
+});
+
+function syncModeUi() {
+  document.querySelectorAll(".advanced-only").forEach((el) => {
+    el.classList.toggle("hidden", uiMode !== "advanced");
+  });
+}
+
 function buildQuoteRequest(values) {
+  const mode = String(values.uiMode ?? uiMode ?? "simple");
+  const customSource = String(values.customSourceToken ?? "").trim();
+  const customTarget = String(values.customTargetToken ?? "").trim();
   return {
     sourceChainId: String(values.sourceChainId ?? ""),
-    sourceToken: String(values.sourceToken ?? ZERO_ADDRESS),
+    sourceToken: customSource || String(values.sourceToken ?? ZERO_ADDRESS),
     targetChainId: String(values.targetChainId ?? ""),
-    targetToken: String(values.targetToken ?? ZERO_ADDRESS),
+    targetToken: customTarget || String(values.targetToken ?? ZERO_ADDRESS),
     recipient: String(values.recipient ?? "").trim(),
     usdAmountMicros: String(values.usdAmountMicros ?? "0"),
+    mode,
     captchaToken: getCaptchaToken(),
   };
 }
@@ -599,12 +622,23 @@ function renderQuote(quote) {
 
 function renderQuotePreview(quote) {
   const target = findToken(quote.targetChainId, quote.targetToken);
+  const sourcesTable =
+    Array.isArray(quote.sources) && quote.sources.length
+      ? `<div class="quote-sources-table">${quote.sources
+          .map(
+            (s) =>
+              `<div class="quote-sources-table__row"><span>${escapeHtml(s.provider ?? s.source ?? "?")}</span><strong>${escapeHtml(formatFriendlyTokenAmount(s.destAmountOut ?? s.targetAmount, quote.targetChainId, quote.targetToken, "target"))}</strong></div>`
+          )
+          .join("")}</div>`
+      : "";
   return `
-    <div class="quote-preview__main"><span class="muted">You pay exactly</span><div class="quote-preview__amount">${escapeHtml(formatFriendlyTokenAmount(quote.sourceAmount, quote.sourceChainId, quote.sourceToken, "payment"))}</div></div>
-    <div class="quote-preview__row"><span>Price</span><strong>${escapeHtml(formatPriceLine(quote))}</strong></div>
-    <div class="quote-preview__row"><span>Fee included</span><strong>${escapeHtml(formatFriendlyTokenAmount(quote.feeAmount, quote.sourceChainId, quote.sourceToken, "payment"))}</strong></div>
-    <div class="quote-preview__row"><span>You receive</span><strong>${escapeHtml(formatFriendlyTokenAmount(quote.targetAmount, quote.targetChainId, quote.targetToken, "target"))}</strong></div>
+    <div class="quote-preview__main"><span class="muted">Estimated receive</span><div class="quote-preview__amount">${escapeHtml(formatFriendlyTokenAmount(quote.targetAmount, quote.targetChainId, quote.targetToken, "target"))}</div></div>
+    <div class="quote-preview__row"><span>Best route</span><strong>${escapeHtml(quote.selectedProvider ?? "auto")}</strong></div>
+    <div class="quote-preview__row"><span>You pay exactly</span><strong>${escapeHtml(formatFriendlyTokenAmount(quote.sourceAmount, quote.sourceChainId, quote.sourceToken, "payment"))}</strong></div>
+    <div class="quote-preview__row"><span>Protocol fee</span><strong>${escapeHtml(formatFriendlyTokenAmount(quote.feeAmount, quote.sourceChainId, quote.sourceToken, "payment"))}</strong></div>
     <div class="quote-preview__row"><span>Receiving on</span><strong>${escapeHtml(chainLabel(quote.targetChainId))} ${escapeHtml(target?.symbol ?? tokenLabel(quote.targetChainId, quote.targetToken))}</strong></div>
+    ${sourcesTable}
+    <p class="fineprint">Final amount is re-quoted when your payment lands. Send the exact token, chain, and amount shown on the invoice.</p>
   `;
 }
 
@@ -1155,8 +1189,8 @@ function renderQuoteSourceCards(invoice) {
     <section class="source-card-grid">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Quote sources</p>
-          <h3>Rate confidence</h3>
+          <p class="eyebrow">Aggregator comparison</p>
+          <h3>Route quotes</h3>
         </div>
       </div>
       ${
@@ -1165,15 +1199,14 @@ function renderQuoteSourceCards(invoice) {
               .map(
                 (source) => `
                   <article class="source-card">
-                    <strong>${escapeHtml(source.source)}</strong>
-                    <span>rate ${escapeHtml(String(source.rate))}</span>
-                    <span>${escapeHtml(formatTokenAmount(source.targetAmount, invoice.targetChainId, invoice.targetToken))}</span>
+                    <strong>${escapeHtml(source.provider ?? source.source ?? "?")}</strong>
+                    <span>${escapeHtml(formatTokenAmount(source.destAmountOut ?? source.targetAmount, invoice.targetChainId, invoice.targetToken))}</span>
                     <small>${escapeHtml(formatTs(source.updatedAt))}</small>
                   </article>
                 `
               )
               .join("")
-          : `<p class="muted small">No per-source rows on this quote.</p>`
+          : `<p class="muted small">No per-aggregator rows on this quote.</p>`
       }
     </section>
   `;
@@ -1372,8 +1405,18 @@ function selectedTarget() {
   return { chainId: String(targetChain.value ?? ""), address: String(targetToken.value ?? ZERO_ADDRESS) };
 }
 
+function isStableSymbol(symbol) {
+  return ["USDT", "USDC", "DAI", "USDD"].includes(String(symbol ?? "").toUpperCase());
+}
+
 function tokenOptionsForChain(chain, predicate = () => true) {
+  const simpleOnly = uiMode === "simple";
   return (chain?.tokens ?? [])
+    .filter((token) => {
+      if (simpleOnly && token.tier === "advanced") return false;
+      if (simpleOnly && !token.isNative && !isStableSymbol(token.symbol)) return false;
+      return true;
+    })
     .filter(predicate)
     .map((token) => {
       const address = token.isNative ? ZERO_ADDRESS : token.address;

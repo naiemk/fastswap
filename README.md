@@ -1,46 +1,48 @@
-# fastswap
+# FastSwap
 
-Cross-chain Fast Swap product built on [`onchain-invoice`](https://github.com/naiemk/onchain-invoice) payment infrastructure.
+Cross-chain swap aggregator built on [`onchain-invoice`](https://github.com/naiemk/onchain-invoice). Users pay a deterministic invoice address (no wallet connect); a relayer executes the best route via Rango, Rubic, Symbiosis, or Transit adapters on the source chain.
 
 ## Layout
 
-- `server/` — FastSwap HTTP API (quotes, invoices, track, liquidity)
-- `ui/` — static checkout UI
-- `nodes/` — sweep adapter, relay, liquidity monitor, aggregate-all
-- `cli/` — deploy / configure / testnet ops
-- `contracts/` — FastSwapReceiver, FastSwapCore, Tron FastSwap, LM wrappers
-- `LiquidityManager/` — treasury rebalancer bot + contracts
-- `FastSwapConfig.yaml` — chains, tokens, liquidity, deploy addresses
+- `server/` — HTTP API (multi-aggregator quotes, invoices, track)
+- `aggregators/` — provider clients + quote comparison
+- `ui/` — checkout UI (simple / advanced modes)
+- `nodes/` — sweep adapter, execute node (replaces dest-chain relay)
+- `cli/` — deploy / configure ops
+- `contracts/` — `FastSwapExecutor`, adapters, `FastSwapReceiver` (invoice stack from npm)
+- `FastSwapConfig.yaml` — chains, tokens, deploy addresses
 
 ## Dependency
 
-Installs `onchain-invoice` from the sibling checkout (`file:../onchain-invoice`). Rebuild the invoice package after pulling changes:
-
 ```bash
-cd ../onchain-invoice && npm run build
-cd ../fastswap && npm install && npm run build
+npm install   # runs postinstall: builds onchain-invoice SDK + copies contract artifacts
+npm run compile
+npm run build
 ```
 
-Hardhat compiles shared invoice contracts via relative symlinks under `contracts/` (for example `Receiver.sol` → `../onchain-invoice/contracts/Receiver.sol`). Keep the repos as siblings.
-
-For TypeScript `Provider` / `TronWeb` type unity with the `file:` dependency, after install:
-
-```bash
-rm -rf ../onchain-invoice/node_modules/ethers ../onchain-invoice/node_modules/tronweb
-ln -s "$(pwd)/node_modules/ethers" ../onchain-invoice/node_modules/ethers
-ln -s "$(pwd)/node_modules/tronweb" ../onchain-invoice/node_modules/tronweb
-```
+Invoice contracts compile from `node_modules/onchain-invoice/contracts` (no sibling checkout required). Postinstall clones/builds from GitHub when prebuilt `dist/` is missing.
 
 ## Commands
 
 ```bash
-npm run compile
-npm test
 npm run server
 npm run sweep
-npm run relay
-npm run liqman
+npm run execute
 npm run cli -- --predict
+npm run dev:local    # two Hardhat chains + production API/nodes
+npm run dev:pay -- <invoiceId>
+npm run package      # regenerate deploy/dist for VPS wget install
 ```
 
-See `docs/PROD_LAUNCH.md` and `docs/TESTNET_MIRROR.md`.
+See [docs/PROD_LAUNCH.md](docs/PROD_LAUNCH.md).
+
+## VPS install
+
+After `npm run package`, commit `deploy/dist/` and on the VPS:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/naiemk/fastswap/main/deploy/dist/install-api.sh | bash
+wget -qO- https://raw.githubusercontent.com/naiemk/fastswap/main/deploy/dist/install-ui.sh | bash
+wget -qO- https://raw.githubusercontent.com/naiemk/fastswap/main/deploy/dist/install-nodes.sh | bash
+wget -qO- https://raw.githubusercontent.com/naiemk/fastswap/main/deploy/dist/install-gateway.sh | bash
+```

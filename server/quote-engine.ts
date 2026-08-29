@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { FastSwapChainConfig, FastSwapQuote, FastSwapQuoteRequest, FastSwapTokenConfig, QuoteSourceResult } from "../shared/types.js";
+import type { IAggregatorClient } from "../aggregators/IAggregatorClient.js";
+import { compareQuotesByDestAmount, pickBestQuote, applySlippageFloor, protocolFeeAmount, routeAmountAfterFee } from "../aggregators/compare.js";
+import type { AggregatorId, FastSwapChainConfig, FastSwapQuote, FastSwapQuoteRequest, FastSwapTokenConfig } from "../shared/types.js";
 import { resolveTokenPriceUsdMicros, type PriceFetch } from "./price-sources.js";
-import type { QuoteSource } from "./quote-sources.js";
 
 export type QuoteEngineOptions = {
-  sources: QuoteSource[];
+  clients: IAggregatorClient[];
   feeBps: bigint;
   quoteTtlMs: number;
-  maxDeviationBps: bigint;
-  allowedPackUsdMicros: string[];
   chains?: FastSwapChainConfig[];
+  defaultSlippageBps?: number;
   priceFetch?: PriceFetch;
 };
 
@@ -17,37 +17,43 @@ export class QuoteEngine {
   constructor(private readonly options: QuoteEngineOptions) {}
 
   async quote(request: FastSwapQuoteRequest): Promise<FastSwapQuote> {
-    const usdMicros = requestUsdMicros(request);
-    if (!this.options.allowedPackUsdMicros.includes(usdMicros.toString())) {
-      throw new Error("Unsupported pack amount");
-    }
-    if (this.options.sources.length < 3) {
-      throw new Error("At least three quote sources are required");
-    }
+    const sourceAmount = await resolveSourceAmount(request, this.options.chains, this.options.priceFetch);
+    if (sourceAmount <= 0n) throw new Error("Invalid source amount");
 
-    const results = await Promise.allSettled(this.options.sources.map((source) => source.getQuote(request)));
+    const slippageBps = request.slippageBps ?? this.options.defaultSlippageBps ?? 100;
+    const routeAmount = routeAmountAfterFee(sourceAmount, this.options.feeBps);
+    if (routeAmount <= 0n) throw new Error("Invalid source amount after fee");
+
+    const quoteReq = {
+      sourceChainId: request.sourceChainId,
+      sourceToken: request.sourceToken,
+      sourceAmount: routeAmount.toString(),
+      destChainId: request.targetChainId,
+      destToken: request.targetToken,
+      recipient: request.recipient,
+      refundAddress: request.refundAddress,
+      slippageBps,
+      preferredProvider: request.preferredProvider,
+    };
+
+    const results = await Promise.allSettled(this.options.clients.map((client) => client.quote(quoteReq)));
     const good = results
-      .filter((result): result is PromiseFulfilledResult<QuoteSourceResult> => result.status === "fulfilled")
-      .map((result) => result.value)
-      .sort((a, b) => compareBigInt(BigInt(a.targetAmount), BigInt(b.targetAmount)));
+      .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<IAggregatorClient["quote"]>>> => r.status === "fulfilled")
+      .map((r) => r.value);
 
-    if (good.length < 2) throw new Error("Not enough quote sources");
-    const median = good[Math.floor(good.length / 2)];
-    const accepted = good.filter((quote) => withinDeviation(BigInt(quote.targetAmount), BigInt(median.targetAmount), this.options.maxDeviationBps));
-    if (accepted.length < 2) throw new Error("Quote sources diverged");
+    if (good.length === 0) {
+      const reason = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+      throw new Error(reason?.reason instanceof Error ? reason.reason.message : "No aggregator quotes available");
+    }
 
-    const conservative = accepted[0];
-    const sourceToken = findToken(this.options.chains, request.sourceChainId, request.sourceToken);
-    const targetToken = findToken(this.options.chains, request.targetChainId, request.targetToken);
-    const targetPriceUsdMicros = await resolveTokenPriceUsdMicros(targetToken, this.options.priceFetch);
-    const sourcePriceUsdMicros = await resolveTokenPriceUsdMicros(sourceToken, this.options.priceFetch);
-    const pricedTarget = tokenAmountFromUsdPack(usdMicros, targetToken, targetPriceUsdMicros);
-    const grossTarget = pricedTarget ?? BigInt(conservative.targetAmount);
-    const feeUsdMicros = (usdMicros * this.options.feeBps) / 10_000n;
-    const sourceAmount = tokenAmountFromUsdPack(usdMicros + feeUsdMicros, sourceToken, sourcePriceUsdMicros) ?? usdMicros + feeUsdMicros;
-    const sources = pricedTarget
-      ? accepted.map((source) => ({ ...source, targetAmount: grossTarget.toString() }))
-      : accepted;
+    const ranked = compareQuotesByDestAmount(good);
+    const selected =
+      (request.preferredProvider && ranked.find((q) => q.provider === request.preferredProvider)) ??
+      pickBestQuote(ranked);
+    if (!selected) throw new Error("No quote selected");
+
+    const fee = protocolFeeAmount(sourceAmount, this.options.feeBps);
+    const minDestOut = applySlippageFloor(BigInt(selected.destAmountOut), slippageBps);
 
     return {
       quoteId: randomUUID(),
@@ -57,68 +63,70 @@ export class QuoteEngine {
       sourceAmount: sourceAmount.toString(),
       targetChainId: request.targetChainId,
       targetToken: request.targetToken,
-      targetAmount: grossTarget.toString(),
+      targetAmount: minDestOut.toString(),
       recipient: request.recipient,
-      feeAmount: tokenAmountFromUsdPack(feeUsdMicros, sourceToken, sourcePriceUsdMicros)?.toString() ?? feeUsdMicros.toString(),
-      rate: conservative.rate,
-      sources,
+      refundAddress: request.refundAddress,
+      feeAmount: fee.toString(),
+      slippageBps,
+      selectedProvider: selected.provider as AggregatorId,
+      sources: ranked.map((q) => ({
+        provider: q.provider as AggregatorId,
+        destAmountOut: q.destAmountOut,
+        sourceAmountIn: q.sourceAmountIn,
+        estimatedDurationSec: q.estimatedDurationSec,
+        updatedAt: q.updatedAt,
+      })),
     };
   }
 }
 
-function withinDeviation(value: bigint, reference: bigint, maxDeviationBps: bigint) {
-  if (reference === 0n) return value === 0n;
-  const diff = value > reference ? value - reference : reference - value;
-  return (diff * 10_000n) / reference <= maxDeviationBps;
-}
-
-function compareBigInt(a: bigint, b: bigint) {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function findToken(chains: FastSwapChainConfig[] | undefined, chainId: string, tokenAddress: string): FastSwapTokenConfig | undefined {
-  const chain = chains?.find((candidate) => candidate.id === chainId);
-  if (!chain) return undefined;
-  const isTron = chain.type === "tron";
-  if (isNativeAddress(tokenAddress)) return chain.tokens.find((token) => token.isNative);
-  const normalized = normalizeAddress(tokenAddress, isTron);
-  return chain.tokens.find(
-    (token) => !token.isNative && normalizeAddress(token.address, isTron) === normalized
-  );
-}
-
-const ZERO_EVM_ADDRESS = "0x0000000000000000000000000000000000000000";
-
-function isNativeAddress(address: string | undefined): boolean {
-  return !address || address === "native" || address.toLowerCase() === ZERO_EVM_ADDRESS;
-}
-
-/** TRON base58 (`T...`) addresses are case-sensitive, so only EVM hex addresses are lowercased. */
-function normalizeAddress(address: string | undefined, isTron: boolean) {
-  if (!address) return ZERO_EVM_ADDRESS;
-  return isTron && address.startsWith("T") ? address : address.toLowerCase();
-}
-
-const USD_MICROS = 1_000_000n;
-
-function requestUsdMicros(request: FastSwapQuoteRequest): bigint {
-  const raw = request.usdAmountMicros;
-  if (raw !== undefined) {
-    const parsed = parsePositiveBigInt(raw);
-    if (!parsed) throw new Error("Invalid USD amount");
-    return parsed;
+async function resolveSourceAmount(request: FastSwapQuoteRequest, chains?: FastSwapChainConfig[], priceFetch?: PriceFetch): Promise<bigint> {
+  if (request.sourceAmount) {
+    const parsed = parsePositiveBigInt(request.sourceAmount);
+    if (parsed) return parsed;
   }
-  if (request.usdPack === undefined || !Number.isInteger(request.usdPack) || request.usdPack <= 0) {
-    throw new Error("Invalid USD amount");
+  const usdMicros = requestUsdMicros(request);
+  if (usdMicros) {
+    const token = findToken(chains, request.sourceChainId, request.sourceToken);
+    const price =
+      parsePositiveBigInt(token?.priceUsdMicros) ??
+      (await resolveTokenPriceUsdMicros(token, priceFetch));
+    const fromUsd = tokenAmountFromUsd(usdMicros, token, price);
+    if (fromUsd) return fromUsd;
   }
-  return BigInt(request.usdPack) * USD_MICROS;
+  throw new Error("sourceAmount or usdAmountMicros required");
 }
 
-function tokenAmountFromUsdPack(usdMicros: bigint, token: FastSwapTokenConfig | undefined, resolvedPriceMicros?: bigint): bigint | undefined {
+function tokenAmountFromUsd(
+  usdMicros: bigint,
+  token: FastSwapTokenConfig | undefined,
+  resolvedPriceMicros?: bigint
+): bigint | undefined {
   const priceMicros = resolvedPriceMicros ?? parsePositiveBigInt(token?.priceUsdMicros);
   if (!priceMicros || !token) return undefined;
   const scale = 10n ** BigInt(token.decimals);
   return ceilDiv(usdMicros * scale, priceMicros);
+}
+
+function requestUsdMicros(request: FastSwapQuoteRequest): bigint | undefined {
+  if (request.usdAmountMicros) {
+    return parsePositiveBigInt(request.usdAmountMicros);
+  }
+  if (request.usdPack !== undefined && Number.isInteger(request.usdPack) && request.usdPack > 0) {
+    return BigInt(request.usdPack) * 1_000_000n;
+  }
+  return undefined;
+}
+
+function findToken(chains: FastSwapChainConfig[] | undefined, chainId: string, tokenAddress: string): FastSwapTokenConfig | undefined {
+  const chain = chains?.find((c) => c.id === chainId);
+  if (!chain) return undefined;
+  if (isNative(tokenAddress)) return chain.tokens.find((t) => t.isNative);
+  return chain.tokens.find((t) => !t.isNative && t.address?.toLowerCase() === tokenAddress.toLowerCase());
+}
+
+function isNative(address: string): boolean {
+  return !address || address === "native" || address.toLowerCase() === "0x0000000000000000000000000000000000000000";
 }
 
 function parsePositiveBigInt(value: string | undefined): bigint | undefined {
@@ -127,6 +135,6 @@ function parsePositiveBigInt(value: string | undefined): bigint | undefined {
   return parsed > 0n ? parsed : undefined;
 }
 
-function ceilDiv(numerator: bigint, denominator: bigint) {
-  return (numerator + denominator - 1n) / denominator;
+function ceilDiv(n: bigint, d: bigint) {
+  return (n + d - 1n) / d;
 }

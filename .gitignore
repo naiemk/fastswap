@@ -82,6 +82,9 @@ out
 .nuxt
 dist
 .output
+.vendor
+data/local
+FastSwapConfig.local.yaml
 
 # Gatsby files
 .cache/

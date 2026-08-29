@@ -1,6 +1,6 @@
 import { expect } from "chai";
-import { AbiCoder } from "ethers";
-import { encodeFastSwapIntent, getFastSwapInvoiceId, quoteToIntent } from "../shared/encoding.js";
+import { AbiCoder, hexlify, zeroPadValue } from "ethers";
+import { encodeFastSwapIntent, getFastSwapInvoiceId, quoteToIntent, INTENT_VERSION_V2 } from "../shared/encoding.js";
 import {
   evmHexToTronBase58,
   isTronBase58Address,
@@ -36,8 +36,8 @@ const chains: FastSwapChainConfig[] = [
   },
 ];
 
-const INTENT_TUPLE = [
-  "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,address sourceToken,uint256 sourceAmount,uint256 targetChainId,address targetToken,uint256 targetAmount,address recipient,uint64 expiresAt,address refundAddress)",
+const INTENT_V2_TUPLE = [
+  "tuple(uint8 version,bytes32 quoteId,uint256 sourceChainId,bytes sourceToken,uint256 minSourceAmount,uint256 destChainId,bytes destToken,uint256 minAmountOut,bytes recipient,bytes refundTo,uint64 expiresAt,uint16 slippageBps)",
 ];
 
 describe("TRON address helpers", function () {
@@ -54,8 +54,8 @@ describe("TRON address helpers", function () {
   });
 });
 
-describe("FastSwap intent encoding (chain-type aware)", function () {
-  it("encodes TRON address slots as their 20-byte hex body", function () {
+describe("FastSwap intent encoding (v2, chain-type aware)", function () {
+  it("encodes TRON token slots as 20-byte bodies", function () {
     const quote = baseQuote({
       sourceChainId: "3448148188",
       sourceToken: TRON_USDT,
@@ -64,17 +64,16 @@ describe("FastSwap intent encoding (chain-type aware)", function () {
       recipient: EVM_RECIPIENT,
     });
     const intent = quoteToIntent(quote, chains);
-    expect(intent.sourceToken).to.equal(tronAddressToEvmHex(TRON_USDT));
-    expect(intent.targetToken.toLowerCase()).to.equal(EVM_TOKEN.toLowerCase());
+    expect(intent.sourceToken.toLowerCase()).to.equal(hexlify(zeroPadValue(tronAddressToEvmHex(TRON_USDT), 20)).toLowerCase());
+    expect(intent.destToken.toLowerCase()).to.equal(hexlify(zeroPadValue(EVM_TOKEN, 20)).toLowerCase());
 
     const data = encodeFastSwapIntent(intent);
-    const [decoded] = AbiCoder.defaultAbiCoder().decode(INTENT_TUPLE, data);
-    expect(decoded.sourceToken).to.equal(tronAddressToEvmHex(TRON_USDT));
-    // invoiceId must be a stable keccak256 of the encoded data.
+    const [decoded] = AbiCoder.defaultAbiCoder().decode(INTENT_V2_TUPLE, data);
+    expect(Number(decoded.version)).to.equal(Number(INTENT_VERSION_V2));
     expect(getFastSwapInvoiceId(data)).to.match(/^0x[0-9a-fA-F]{64}$/);
   });
 
-  it("encodes a TRON target recipient back to the same base58 address", function () {
+  it("encodes a TRON target recipient as bytes", function () {
     const quote = baseQuote({
       sourceChainId: "11155111",
       sourceToken: "native",
@@ -84,10 +83,10 @@ describe("FastSwap intent encoding (chain-type aware)", function () {
     });
     const intent = quoteToIntent(quote, chains);
     expect(evmHexToTronBase58(intent.recipient)).to.equal(TRON_RECIPIENT);
-    expect(evmHexToTronBase58(intent.targetToken)).to.equal(TRON_USDT);
+    expect(evmHexToTronBase58(intent.destToken)).to.equal(TRON_USDT);
   });
 
-  it("maps native tokens to the zero address on both chains", function () {
+  it("maps native tokens to empty bytes on both chains", function () {
     const quote = baseQuote({
       sourceChainId: "11155111",
       sourceToken: "native",
@@ -96,12 +95,14 @@ describe("FastSwap intent encoding (chain-type aware)", function () {
       recipient: TRON_RECIPIENT,
     });
     const intent = quoteToIntent(quote, chains);
-    expect(intent.sourceToken).to.equal("0x0000000000000000000000000000000000000000");
-    expect(intent.targetToken).to.equal("0x0000000000000000000000000000000000000000");
+    expect(intent.sourceToken).to.equal("0x");
+    expect(intent.destToken).to.equal("0x");
   });
 });
 
 function baseQuote(overrides: Partial<FastSwapQuote>): FastSwapQuote {
+  const sourceChainId = overrides.sourceChainId ?? "11155111";
+  const defaultRefund = sourceChainId === "3448148188" ? TRON_RECIPIENT : EVM_RECIPIENT;
   return {
     quoteId: "0x" + "11".repeat(32),
     expiresAt: Date.now() + 60_000,
@@ -112,8 +113,10 @@ function baseQuote(overrides: Partial<FastSwapQuote>): FastSwapQuote {
     targetToken: "native",
     targetAmount: "950000",
     recipient: TRON_RECIPIENT,
+    refundAddress: defaultRefund,
     feeAmount: "0",
-    rate: "1",
+    slippageBps: 100,
+    selectedProvider: "mock",
     sources: [],
     ...overrides,
   };

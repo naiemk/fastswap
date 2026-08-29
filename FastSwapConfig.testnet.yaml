@@ -1,23 +1,18 @@
-# FastSwap 2-chain testnet go-live: Sepolia + TRON Nile.
-# Regenerate: npm run generate:testnet-config
-# Real prices (CoinGecko/Binance). Real Cloudflare Turnstile (TURNSTILE_* env).
-# After deploy, addresses are written here (or use FastSwapConfig.testnet.local.yaml.example overlay).
 version: 1
-
 active-chains:
   - sepolia
   - tron
 server:
   host: 0.0.0.0
   apiPort: 4010
-  publicUrl: "${FASTSWAP_PUBLIC_URL}"
+  publicUrl: ${FASTSWAP_PUBLIC_URL}
   sqlitePath: ./data/fastswap-testnet.sqlite
   auditLogPath: ./data/api-audit-testnet.jsonl
   signingSecretEnv: API_SIGNING_SECRET
   captcha:
     provider: cloudflare-turnstile
-    siteKey: "${TURNSTILE_SITE_KEY}"
-    secretKey: "${TURNSTILE_SECRET_KEY}"
+    siteKey: ${TURNSTILE_SITE_KEY}
+    secretKey: ${TURNSTILE_SECRET_KEY}
     requireForQuotes: true
     requireForInvoices: true
 quote:
@@ -38,14 +33,11 @@ sweepNode:
   confirmations: 1
   logScanOverlap: 100
   sqlitePath: ./data/sweep-testnet.sqlite
-relayNode:
+executeNode:
   pollIntervalMs: 5000
-  confirmations: 1
-liquidityMonitor:
-  pollIntervalMs: 15000
 deploy:
   createx: "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed"
-  owner: "${FASTSWAP_OWNER_ADDRESS}"
+  owner: ${FASTSWAP_OWNER_ADDRESS}
   salts:
     namespace: fastswap-testnet
     version: "1"
@@ -54,45 +46,30 @@ deploy:
     fastSwapAddress: "0xA24987b5121742D2dF98Ad3ED41c6A1Fef54C7Cf"
     sweeperAddress: "0x62dA9f8fFaD1E628FC3C53DCA8A07f6bBe874bA6"
     forwarderImplementation: "0x008F11FE82D54d8fada0BBf302C6423dFc55b7BB"
-    liquidityManagerImplementation: "0x98b230f33B7f336e33CC0C43031b8D48f7eb8012"
-    liquidityManagerAddress: "0x05eE01894AEB23916110C4F05fa7deBd0d3b88C9"
-liquidityManager:
-  pollIntervalMs: 60000
-  sqlitePath: ./data/liquidity-manager-testnet.sqlite
-  economics:
-    gasGateBps: 50
-    minNotionalUsd: 1
-    maxStalenessSec: 3600
-    riskCapUsd: 50
-    cooldownSec: 300
-    slippageBps: 50
-    maxGasPriceGwei: 200
 nodes:
   sweep:
     auditLogPath: ./data/sweep-audit-testnet.jsonl
-  relay:
-    progressPath: ./data/relay-progress-testnet.json
-    auditLogPath: ./data/relay-audit-testnet.jsonl
-  liqman:
-    auditLogPath: ./data/liqman-audit-testnet.jsonl
+  execute:
+    progressPath: ./data/execute-progress-testnet.json
+    auditLogPath: ./data/execute-audit-testnet.jsonl
+    pollIntervalMs: 5000
 chains:
   - key: sepolia
     id: "11155111"
     type: evm
     name: Sepolia
     optional: false
-    rpcUrl: "${SEPOLIA_RPC_URL}"
+    rpcUrl: ${SEPOLIA_RPC_URL}
     explorerUrl: https://sepolia.etherscan.io
     confirmations: 1
     startBlock: 11235000
     aggregatorSlug: eth
     nativeSentinel: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
-    router: "${SEPOLIA_ROUTER_ADDRESS}"
+    router: ${SEPOLIA_ROUTER_ADDRESS}
     tokens:
       ETH:
         decimals: 18
         isNative: true
-        minLiquidity: "0"
         priceSources:
           - type: coingecko
             coinId: ethereum
@@ -100,36 +77,22 @@ chains:
             symbol: ETHUSDT
       USDT:
         decimals: 6
-        minLiquidity: "0"
         priceUsd: "1"
         priceSources:
           - type: coingecko
             coinId: tether
         address: "0x07bd6598cf077187468152e664F6e0B624D89FF8"
-    liquidity:
-      reserveStable: USDT
-      receivers:
-        - tokens:
-            ETH:
-              floor: "0.002"
-              target: "0.005"
-              ceiling: "0.02"
-            USDT:
-              isStable: true
-              floor: "1"
-              target: "5"
-              ceiling: "20"
   - key: tron
     id: "3448148188"
     type: tron
     name: TRON Nile
     optional: false
-    fullHost: "${NILE_FULL_HOST}"
+    fullHost: ${NILE_FULL_HOST}
     feeLimit: "150"
     explorerUrl: https://nile.tronscan.org
     startTimestamp: 0
     aggregatorSlug: tron
-    router: "${TRON_ROUTER_ADDRESS}"
+    router: ${TRON_ROUTER_ADDRESS}
     sweep:
       mode: eoa
       invoiceMasterSecretEnv: TRON_INVOICE_MASTER_SECRET
@@ -140,12 +103,10 @@ chains:
       fastSwapAddress: ""
       sweeperAddress: ""
       forwarderImplementation: ""
-      liquidityManagerAddress: ""
     tokens:
       TRX:
         decimals: 6
         isNative: true
-        minLiquidity: "0"
         priceSources:
           - type: coingecko
             coinId: tron
@@ -154,23 +115,9 @@ chains:
       USDT:
         address: TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf
         decimals: 6
-        minLiquidity: "0"
         priceUsd: "1"
         priceSources:
           - type: coingecko
             coinId: tether
-    liquidity:
-      reserveStable: USDT
-      receivers:
-        - tokens:
-            TRX:
-              floor: "2"
-              target: "5"
-              ceiling: "15"
-            USDT:
-              isStable: true
-              floor: "1"
-              target: "3"
-              ceiling: "8"
     confirmations: 1
     startBlock: 0
